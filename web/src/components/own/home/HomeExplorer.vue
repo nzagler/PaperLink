@@ -26,7 +26,7 @@ import {
 import CardWithoutBorder from '@/components/own/CardWithoutBorder.vue'
 import type { Item } from '@/dto/item'
 import { apiFetch } from '@/auth/api'
-import { useRouter } from "vue-router"
+import { useRouter } from 'vue-router'
 
 type ApiFileNode = { id: string; name: string; size: number }
 type ApiDirNode = { id: number; name: string; files: ApiFileNode[]; directories: ApiDirNode[] }
@@ -63,8 +63,8 @@ function formatBytes(bytes: number): string {
 }
 
 const tree = ref<Item[]>([])
-const path = ref<Item[]>([])
-const history = ref<Item[][]>([[]])
+const pathIds = ref<string[]>([])
+const history = ref<string[][]>([[]])
 const historyIndex = ref(0)
 
 const loading = ref(false)
@@ -80,14 +80,24 @@ async function loadTree() {
     if (!res.ok || !json?.data) {
       loadError.value = json?.message || 'Failed to load documents.'
       tree.value = []
+      pathIds.value = []
+      history.value = [[]]
+      historyIndex.value = 0
       return
     }
 
     const root = json.data as ApiDirNode
     tree.value = mapDirNodeToItems(root)
+    const nextPath = normalizePath(pathIds.value)
+    pathIds.value = nextPath
+    history.value = [nextPath]
+    historyIndex.value = 0
   } catch {
     loadError.value = 'Failed to load documents.'
     tree.value = []
+    pathIds.value = []
+    history.value = [[]]
+    historyIndex.value = 0
   } finally {
     loading.value = false
   }
@@ -98,15 +108,18 @@ onMounted(() => {
 })
 
 const currentItems = computed(() => {
-  const last = path.value[path.value.length - 1]
+  const last = currentPathNodes.value[currentPathNodes.value.length - 1]
   if (!last) return tree.value
   return last.children ?? []
 })
 
 const currentFolderLabel = computed(() => {
-  const last = path.value[path.value.length - 1]
+  const last = currentPathNodes.value[currentPathNodes.value.length - 1]
   return last ? last.name : 'All documents'
 })
+
+const currentPathNodes = computed(() => resolvePath(pathIds.value))
+const currentFolder = computed(() => currentPathNodes.value[currentPathNodes.value.length - 1] ?? null)
 
 const libraryStats = computed(() => {
   const result = { folders: 0, files: 0, bytes: 0 }
@@ -148,23 +161,42 @@ const currentLevelStats = computed(() => {
   return { folders, files, bytes }
 })
 
-function updatePath(newPath: Item[], pushToHistory = true) {
-  path.value = newPath
+function resolvePath(ids: string[]): Item[] {
+  const resolved: Item[] = []
+  let level = tree.value
+
+  for (const id of ids) {
+    const next = level.find((item) => item.type === 'folder' && String(item.id) === String(id))
+    if (!next || next.type !== 'folder') break
+    resolved.push(next)
+    level = next.children ?? []
+  }
+
+  return resolved
+}
+
+function normalizePath(ids: string[]): string[] {
+  return resolvePath(ids).map((item) => String(item.id))
+}
+
+function updatePath(newPath: string[], pushToHistory = true) {
+  const normalized = normalizePath(newPath)
+  pathIds.value = normalized
   if (!pushToHistory) return
   history.value = history.value.slice(0, historyIndex.value + 1)
-  history.value.push(newPath)
+  history.value.push(normalized)
   historyIndex.value++
 }
 
 
 
 function breadcrumbClick(index: number) {
-  const newPath = index < 0 ? [] : path.value.slice(0, index + 1)
+  const newPath = index < 0 ? [] : pathIds.value.slice(0, index + 1)
   updatePath(newPath)
 }
 
 function goHome() {
-  if (path.value.length === 0) return
+  if (pathIds.value.length === 0) return
   updatePath([])
 }
 
@@ -172,23 +204,23 @@ function goBack() {
   if (historyIndex.value === 0) return
   historyIndex.value--
   const next = history.value[historyIndex.value]
-  if (next) path.value = next
+  if (next) pathIds.value = [...next]
 }
 
 function goForward() {
   if (historyIndex.value >= history.value.length - 1) return
   historyIndex.value++
   const next = history.value[historyIndex.value]
-  if (next) path.value = next
+  if (next) pathIds.value = [...next]
 }
 
 function openFile(item: Item) {
-  router.push("/pdf/"+item.id);
+  void router.push('/pdf/' + item.id)
 }
 
 function handleItemClick(item: Item) {
   if (item.type === 'folder') {
-    updatePath([...path.value, item])
+    updatePath([...pathIds.value, String(item.id)])
   } else {
     openFile(item)
   }
@@ -212,7 +244,7 @@ function addUploadedFile(payload: UploadPayload) {
     size: payload.file.size as any,
   }
 
-  const last = path.value[path.value.length - 1]
+  const last = currentFolder.value
   if (!last) {
     tree.value.push(newItem)
   } else {
@@ -231,7 +263,7 @@ function addCreatedDirectory(name: string, id?: string) {
     children: [],
   }
 
-  const last = path.value[path.value.length - 1]
+  const last = currentFolder.value
   if (!last) {
     tree.value.push(newItem)
   } else {
@@ -248,7 +280,7 @@ function addCreatedDocument(name: string, fileUUID?: string, size?: number) {
     size: size,
   }
 
-  const last = path.value[path.value.length - 1]
+  const last = currentFolder.value
   if (!last) {
     tree.value.push(newItem)
   } else {
@@ -263,12 +295,12 @@ defineExpose({
   addCreatedDocument,
   reload: loadTree,
   getCurrentDirectoryId: () => {
-    const last = path.value[path.value.length - 1]
+    const last = currentFolder.value
     if (!last) return null
     const n = Number(last.id)
     return Number.isFinite(n) ? n : null
   },
-  getCurrentFolderPath: () => path.value.map(p => p.name).join('/'),
+  getCurrentFolderPath: () => currentPathNodes.value.map((p) => p.name).join('/'),
 })
 </script>
 
@@ -285,7 +317,7 @@ defineExpose({
                       variant="outline"
                       size="sm"
                       class="rounded-full px-3 text-xs sm:text-sm"
-                      :disabled="path.length === 0"
+                      :disabled="pathIds.length === 0"
                       @click="goHome"
                   >
                     <HomeIcon class="w-4 h-4 mr-1" />
@@ -379,7 +411,7 @@ defineExpose({
                 </BreadcrumbLink>
               </BreadcrumbItem>
 
-              <template v-for="(node, idx) in path" :key="node.id">
+              <template v-for="(node, idx) in currentPathNodes" :key="node.id">
                 <BreadcrumbSeparator>
                   <ChevronRight class="w-3.5 h-3.5 text-neutral-400 dark:text-neutral-600" />
                 </BreadcrumbSeparator>

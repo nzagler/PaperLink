@@ -54,6 +54,7 @@ async function create() {
 
     const res = await apiFetch('/api/v1/directory/create', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
 

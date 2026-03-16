@@ -235,6 +235,13 @@
           </div>
         </div>
 
+        <div
+            v-if="loadError && !isLoading"
+            class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200"
+        >
+          {{ loadError }}
+        </div>
+
         <!-- Results list -->
         <div class="space-y-1.5">
           <!-- Loading skeleton -->
@@ -366,7 +373,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { onMounted } from 'vue'
 
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -391,7 +398,7 @@ import {
 } from '@/components/ui/select'
 
 import CardWithoutBorder from '@/components/own/CardWithoutBorder.vue'
-import { fetchSearchIndexFromTree, type SearchIndexItem } from '@/lib/search_api'
+import { useSearchView } from '@/composables/useSearchView'
 
 import {
   Search as SearchIcon,
@@ -404,145 +411,24 @@ import {
   ChevronDown,
 } from 'lucide-vue-next'
 
-type Scope = 'all' | 'mine' | 'shared'
-type Sort = 'relevance' | 'recent' | 'az'
-
-interface SearchResult {
-  id: string
-  title: string
-  description: string
-  tags: string[]
-  pages: number
-  size: string
-  updatedAt: string
-  owner: string
-  shared: boolean
-  path: string
-}
-
-const searchQuery = ref('')
-const selectedScope = ref<Scope>('all')
-const selectedSort = ref<Sort>('relevance')
-const selectedTags = ref<string[]>([])
-const tagSearch = ref('')
-const isLoading = ref(false)
-const showAllTags = ref(false)
-const loadError = ref<string | null>(null)
-
-const results = ref<SearchResult[]>([])
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = bytes
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
-}
-
-function pathToTags(path: string) {
-  // Use folder segments as tags (simple + useful with current backend data)
-  const normalized = (path || '').trim().replace(/^\/+|\/+$/g, '')
-  if (!normalized) return ['Root']
-  return normalized.split('/').filter(Boolean)
-}
-
-async function loadFromBackend() {
-  isLoading.value = true
-  loadError.value = null
-  try {
-    const items: SearchIndexItem[] = await fetchSearchIndexFromTree()
-    results.value = items.map((it) => ({
-      id: it.id,
-      title: it.title,
-      description: it.path ? `Folder: ${it.path}` : 'Folder: /',
-      tags: pathToTags(it.path),
-      pages: 0,
-      size: formatBytes(it.sizeBytes),
-      updatedAt: '',
-      owner: 'You',
-      shared: false,
-      path: it.path,
-    }))
-  } catch (e: any) {
-    loadError.value = e?.message ?? 'Failed to load documents'
-  } finally {
-    isLoading.value = false
-  }
-}
+const {
+  searchQuery,
+  selectedScope,
+  selectedSort,
+  selectedTags,
+  tagSearch,
+  isLoading,
+  showAllTags,
+  loadError,
+  filteredTags,
+  filteredResults,
+  loadFromBackend,
+  onSearch,
+  toggleTag,
+  resetFilters,
+} = useSearchView()
 
 onMounted(async () => {
   await loadFromBackend()
 })
-
-const tags = computed(() => {
-  const set = new Set<string>()
-  for (const r of results.value) {
-    for (const t of r.tags) set.add(t)
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b))
-})
-
-const filteredTags = computed(() => {
-  const q = tagSearch.value.trim().toLowerCase()
-  const all = tags.value
-  if (!q) return all
-  return all.filter((t) => t.toLowerCase().includes(q))
-})
-
-const filteredResults = computed(() => {
-  let list = [...results.value]
-
-  const q = searchQuery.value.trim().toLowerCase()
-  if (q) {
-    list = list.filter(
-      (item) =>
-        item.title.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q) ||
-        item.tags.some((t) => t.toLowerCase().includes(q)),
-    )
-  }
-
-  // scope placeholders until backend provides sharing/ownership info
-  if (selectedScope.value === 'shared') {
-    list = list.filter((item) => item.shared)
-  }
-
-  if (selectedTags.value.length) {
-    list = list.filter((item) => selectedTags.value.every((tag) => item.tags.includes(tag)))
-  }
-
-  if (selectedSort.value === 'az') {
-    list.sort((a, b) => a.title.localeCompare(b.title))
-  }
-
-  return list
-})
-
-function onSearch() {
-  // This is now an instant local filter; keep the small loading UX.
-  isLoading.value = true
-  window.setTimeout(() => {
-    isLoading.value = false
-  }, 200)
-}
-
-function toggleTag(tag: string) {
-  if (selectedTags.value.includes(tag)) {
-    selectedTags.value = selectedTags.value.filter((t) => t !== tag)
-  } else {
-    selectedTags.value = [...selectedTags.value, tag]
-  }
-}
-
-function resetFilters() {
-  selectedScope.value = 'all'
-  selectedSort.value = 'relevance'
-  selectedTags.value = []
-  tagSearch.value = ''
-  showAllTags.value = false
-}
 </script>

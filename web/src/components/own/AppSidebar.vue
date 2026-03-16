@@ -29,7 +29,6 @@ import {
   User as UserIcon,
   Ticket,
 } from 'lucide-vue-next'
-import { SIDEBAR_ROUTE_RULES } from '@/router/route_config.ts'
 import { checkIsAdmin } from '@/lib/admin'
 import { logout } from '@/auth/logout'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -56,14 +55,11 @@ async function goToSettings() {
 
 const route = useRoute()
 const userOpen = ref(true)
-const sidebarRule = computed(
-    () => SIDEBAR_ROUTE_RULES[route.name as string]
-)
 
 const isAdmin = ref(false)
 
 const forceClosed = computed(
-    () => sidebarRule.value?.forceClosed === true
+    () => route.meta.forceSidebarClosed === true
 )
 
 const effectiveOpen = computed(() => {

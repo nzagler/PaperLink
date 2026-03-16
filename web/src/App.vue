@@ -2,16 +2,11 @@
 import { computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppSidebar from '@/components/own/AppSidebar.vue'
-import { SIDEBAR_ROUTE_RULES } from '@/router/route_config.ts'
 
 const route = useRoute()
 
-const sidebarRule = computed(
-    () => SIDEBAR_ROUTE_RULES[route.name as string]
-)
-
 const hideSidebar = computed(
-    () => sidebarRule.value?.hide === true
+    () => route.meta.hideSidebar === true
 )
 </script>
 

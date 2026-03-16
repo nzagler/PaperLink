@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { MoreVertical, RefreshCcw, LibraryBig } from "lucide-vue-next"
 
-import { apiFetch } from "@/auth/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"

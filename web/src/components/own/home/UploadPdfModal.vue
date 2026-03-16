@@ -141,6 +141,7 @@ async function save() {
 
     const res = await apiFetch('/api/v1/document/create', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
 
