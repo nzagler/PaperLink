@@ -31,7 +31,7 @@ func DownloadHeblingBook(c *http.Client, data string, downloadPath string) ([]st
 		if endReached {
 			break
 		}
-		outputPDF, err := helper.ConvertAndCompressSVG(downloadPath, filename)
+		outputPDF, err := helper.ConvertSVGToPDF(downloadPath, filename)
 		if err != nil {
 			continue
 		}

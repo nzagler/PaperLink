@@ -2,18 +2,17 @@ package helper
 
 import (
 	"fmt"
-	"github.com/signintech/gopdf"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/signintech/gopdf"
 )
 
-func ConvertAndCompressSVG(downloadPath, filename string) (string, error) {
+func ConvertSVGToPDF(downloadPath, filename string) (string, error) {
 	inputSVG := filepath.Join(downloadPath, filename)
 	outputPDF := filepath.Join(downloadPath, strings.TrimSuffix(filename, ".svg")+".pdf")
-	tmpPDF := outputPDF + ".tmp"
-	finalPDF := outputPDF + ".final"
 
 	if err := exec.Command(
 		"rsvg-convert",
@@ -24,6 +23,19 @@ func ConvertAndCompressSVG(downloadPath, filename string) (string, error) {
 		return "", fmt.Errorf("rsvg-convert failed: %w", err)
 	}
 
+	return outputPDF, nil
+}
+
+func OptimizePDF(inputPDF, outputPDF string) (string, error) {
+	tmpPDF := outputPDF + ".tmp"
+	finalPDF := outputPDF + ".final"
+
+	if err := os.Remove(tmpPDF); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to remove stale temp file %s: %w", tmpPDF, err)
+	}
+	if err := os.Remove(finalPDF); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to remove stale temp file %s: %w", finalPDF, err)
+	}
 	if err := exec.Command(
 		"gs",
 		"-sDEVICE=pdfwrite",
@@ -36,13 +48,14 @@ func ConvertAndCompressSVG(downloadPath, filename string) (string, error) {
 		"-dQUIET",
 		"-dBATCH",
 		"-sOutputFile="+tmpPDF,
-		outputPDF,
+		inputPDF,
 	).Run(); err != nil {
 		return "", fmt.Errorf("ghostscript failed: %w", err)
 	}
 
 	if err := exec.Command(
 		"qpdf",
+		"--linearize",
 		"--object-streams=generate",
 		"--stream-data=compress",
 		tmpPDF,
@@ -52,7 +65,7 @@ func ConvertAndCompressSVG(downloadPath, filename string) (string, error) {
 	}
 
 	if err := os.Rename(finalPDF, outputPDF); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to finalize optimized pdf: %w", err)
 	}
 	_ = os.Remove(tmpPDF)
 

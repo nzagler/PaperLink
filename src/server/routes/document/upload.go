@@ -3,12 +3,14 @@ package document
 import (
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+
 	"paperlink/db/entity"
 	"paperlink/db/repo"
 	"paperlink/ptf"
 	"paperlink/server/routes"
 	"paperlink/util"
-	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,42 +41,74 @@ func Upload(c *gin.Context) {
 		routes.JSONError(c, http.StatusBadRequest, "failed to read uploaded file")
 		return
 	}
-	fileUUID := uuid.New().String()
-	tmpDst := "./data/tmp/uploads/" + fileUUID
 
-	if err := c.SaveUploadedFile(f, tmpDst); err != nil {
-		log.Errorf("failed to save uploaded file: %v", err)
-		routes.JSONError(c, http.StatusInternalServerError, "failed to upload file")
+	fileUUID := uuid.New().String()
+
+	if err := os.MkdirAll("./data/tmp/uploads", 0750); err != nil {
+		log.Errorf("failed to create temp upload dir: %v", err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to prepare upload")
 		return
 	}
-	thumbPTFFile, err := ptf.WriteThumbnailPTFFromPDF(tmpDst)
-	if err != nil {
-		log.Errorf("failed to convert pdf thumbnails to ptf: %v", err)
-		routes.JSONError(c, http.StatusInternalServerError, "failed to process file")
-		return
-	}
+
 	if err := os.MkdirAll("./data/uploads", 0750); err != nil {
 		log.Errorf("failed to create upload dir: %v", err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to store file")
 		return
 	}
 
+	tmpSrc := "./data/tmp/uploads/" + fileUUID + ".pdf"
+	tmpLinearized := "./data/tmp/uploads/" + fileUUID + ".linearized.pdf"
 	dst := "./data/uploads/" + fileUUID + ".pdf"
-	if err := util.CopyFile(tmpDst, dst); err != nil {
-		log.Errorf("failed to copy pdf file: %v", err)
+	thumbDst := "./data/uploads/" + fileUUID + "_thumb.ptf"
+
+	cleanupPaths := []string{tmpSrc, tmpLinearized}
+	defer func() {
+		for _, p := range cleanupPaths {
+			_ = os.Remove(p)
+		}
+	}()
+
+	if err := c.SaveUploadedFile(f, tmpSrc); err != nil {
+		log.Errorf("failed to save uploaded file: %v", err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to upload file")
+		return
+	}
+
+	cmd := exec.Command(
+		"qpdf",
+		"--linearize",
+		"--object-streams=generate",
+		"--stream-data=compress",
+		tmpSrc,
+		tmpLinearized,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Errorf("failed to process pdf with qpdf: %v, output: %s", err, string(output))
+		routes.JSONError(c, http.StatusInternalServerError, "failed to process file")
+		return
+	}
+
+	if err := util.CopyFile(tmpLinearized, dst); err != nil {
+		log.Errorf("failed to copy processed pdf file: %v", err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to store file")
 		return
 	}
 
-	thumbDst := "./data/uploads/" + fileUUID + "_thumb.ptf"
+	thumbPTFFile, err := ptf.WriteThumbnailPTFFromPDF(dst)
+	if err != nil {
+		log.Errorf("failed to convert pdf thumbnails to ptf: %v", err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to process file")
+		return
+	}
+	defer func() {
+		_ = os.RemoveAll(filepath.Dir(thumbPTFFile))
+	}()
+
 	if err := util.CopyFile(thumbPTFFile, thumbDst); err != nil {
 		log.Errorf("failed to copy thumbnail ptf file: %v", err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to store file")
 		return
 	}
-
-	_ = os.RemoveAll(filepath.Dir(thumbPTFFile))
-	_ = os.Remove(tmpDst)
 
 	stat, err := os.Stat(dst)
 	if err != nil {

@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch, markRaw } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?worker'
@@ -16,7 +16,7 @@ export function usePdfReader() {
   const canvasEl = ref<HTMLCanvasElement | null>(null)
   const thumbnailScrollEl = ref<HTMLDivElement | null>(null)
   const thumbnails = ref<(string | null)[]>([])
-  const THUMB_BATCH_SIZE = 50
+  const THUMB_BATCH_SIZE = 25
   const thumbnailBatchLocks = reactive<Record<string, boolean>>({})
   const thumbnailBatchCache = reactive<Record<string, boolean>>({})
   const readerError = ref<string | null>(null)
@@ -61,6 +61,7 @@ export function usePdfReader() {
     if (!res.ok) {
       throw new Error('Failed to load document metadata')
     }
+
     const doc = await res.json().catch(() => null)
     pageCount.value = Number(doc?.file?.pages ?? 0)
     thumbnails.value = Array.from({ length: pageCount.value }, () => null)
@@ -92,6 +93,7 @@ export function usePdfReader() {
   async function fetchThumbnailBatch(startIndex: number) {
     const localPdfID = pdfID.value
     if (pageCount.value === 0 || startIndex >= pageCount.value) return
+
     const start = Math.max(0, startIndex)
     const end = Math.min(pageCount.value - 1, start + THUMB_BATCH_SIZE - 1)
     const key = `${start}-${end}`
@@ -161,12 +163,19 @@ export function usePdfReader() {
     const pdf = pdfDocument.value
     if (!pdf) return
 
-    const preloadBefore = Math.max(1, n - 1)
+    const preloadBefore = n
     const preloadAfter = Math.min(pageCount.value, n + 1)
     for (let i = preloadBefore; i <= preloadAfter; i++) {
       void pdf.getPage(i).catch(() => {
       })
     }
+  }
+
+  function scrollThumbnailIntoView(page: number) {
+    void nextTick(() => {
+      const el = thumbnailScrollEl.value?.querySelector<HTMLElement>(`[data-page="${page}"]`)
+      el?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
   }
 
   async function renderPage(n: number) {
@@ -207,6 +216,7 @@ export function usePdfReader() {
     n = Math.min(pageCount.value, Math.max(1, n))
     currentPage.value = n
     ensureThumbnailBatchForPage(n)
+    scrollThumbnailIntoView(n)
     void renderPage(n)
   }
 
@@ -233,6 +243,7 @@ export function usePdfReader() {
       await fetchThumbnailBatch(0)
       ensureThumbnailBatchesForViewport()
       await renderPage(1)
+      scrollThumbnailIntoView(1)
     } catch (err) {
       if (token !== initToken) return
       console.error('Failed to initialize PDF reader', err)
@@ -244,8 +255,19 @@ export function usePdfReader() {
     await initializeReader()
 
     keydownHandler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'PageDown') nextPage()
-      if (e.key === 'ArrowLeft' || e.key === 'PageUp') prevPage()
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+
+      const target = e.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown') {
+        e.preventDefault()
+        nextPage()
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault()
+        prevPage()
+      }
     }
     window.addEventListener('keydown', keydownHandler)
   })

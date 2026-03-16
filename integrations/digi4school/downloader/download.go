@@ -10,6 +10,7 @@ import (
 	"paperlink_d4s/downloader/helper"
 	"paperlink_d4s/downloader/types"
 	"paperlink_d4s/structs"
+	"path/filepath"
 	"sort"
 )
 
@@ -70,9 +71,14 @@ func DownloadBook(book *structs.Book, outputPath string, digi4sCookie string) er
 	}
 
 	sort.Strings(files)
-	err = api.MergeCreateFile(files, outputPath, false, nil)
+	mergedPath := filepath.Join(tmp, "merged.pdf")
+	err = api.MergeCreateFile(files, mergedPath, false, nil)
 	if err != nil {
 		return fmt.Errorf("failed to write merged pdf: %w", err)
+	}
+	_, err = helper.OptimizePDF(mergedPath, outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to optimize merged pdf: %w", err)
 	}
 	return nil
 }

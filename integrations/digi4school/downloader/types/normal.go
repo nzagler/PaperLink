@@ -34,10 +34,10 @@ func DownloadD4sBook(c *http.Client, downloadPath string, location string) ([]st
 		if endReached {
 			break
 		}
-		outputPDF, err := helper.ConvertAndCompressSVG(downloadPath, filename)
+		outputPDF, err := helper.ConvertSVGToPDF(downloadPath, filename)
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert and compress pdf: %w", err)
+			return nil, fmt.Errorf("failed to convert svg to pdf: %w", err)
 		}
 		files = append(files, outputPDF)
 		page++

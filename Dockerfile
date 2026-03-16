@@ -1,11 +1,17 @@
 FROM node:20-bookworm AS web-build
 WORKDIR /src/web
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    brotli \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY web/package*.json ./
 RUN npm install
 
 COPY web/ ./
+COPY src/scripts/brotli-dist.sh /usr/local/bin/brotli-dist
 RUN npm run build
+RUN chmod +x /usr/local/bin/brotli-dist && /usr/local/bin/brotli-dist /src/web/dist
 
 
 FROM golang:1.25-bookworm AS go-build
