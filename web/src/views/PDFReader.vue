@@ -89,10 +89,6 @@
                 Go
               </Button>
             </div>
-
-            <div class="rounded-full border border-neutral-200 px-2 py-1 text-[10px] text-neutral-500 dark:border-neutral-700 dark:text-neutral-300">
-              25 thumb batch
-            </div>
             <div class="hidden rounded-full border border-neutral-200 px-2 py-1 text-[10px] text-neutral-500 dark:border-neutral-700 dark:text-neutral-300 md:block">
               ← → ↑ ↓ navigate
             </div>

@@ -126,7 +126,7 @@ onMounted(async () => {
                     class="flex h-9 w-8 items-center justify-center rounded-md bg-neutral-900 text-neutral-50 text-[10px] font-semibold tracking-[0.2em] dark:bg-neutral-100 dark:text-neutral-900 overflow-hidden"
                 >
                   <img
-                      src="/logo.png"
+                      src="/logo.webp"
                       alt="Paperlink logo"
                       class="h-7 w-7 object-contain"
                   />

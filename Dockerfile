@@ -24,13 +24,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY src/go.mod src/go.sum ./
 RUN go mod download
 
+COPY integrations/digi4school/go.mod integrations/digi4school/go.sum ./integrations/digi4school/
+RUN cd /src/integrations/digi4school && go mod download
+
 COPY src .
 COPY integrations ./integrations
 
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o app
-
-WORKDIR /src/integrations/digi4school
-RUN chmod +x build.sh && ./build.sh
+RUN cd /src/integrations/digi4school && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o /src/integrations/d4s .
 
 
 FROM debian:bookworm-slim
@@ -39,6 +40,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-bin \
     ghostscript \
+    qpdf \
+    webp \
     ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 

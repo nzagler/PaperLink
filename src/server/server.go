@@ -30,22 +30,42 @@ func isBrotliCompressedAsset(path string) bool {
 	}
 }
 
+func isFrontendFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".css", ".js":
+		return true
+	default:
+		return false
+	}
+}
+
+func frontendFilePath(requestPath string) string {
+	return filepath.Join("./dist", strings.TrimPrefix(filepath.Clean("/"+requestPath), "/"))
+}
+
+func clientAcceptsBrotli(c *gin.Context) bool {
+	return strings.Contains(c.GetHeader("Accept-Encoding"), "br")
+}
+
+func serveFile(c *gin.Context, path string, allowBrotli bool) {
+	if allowBrotli && clientAcceptsBrotli(c) {
+		c.Header("Content-Encoding", "br")
+		c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(path)))
+		c.File(path)
+		return
+	}
+
+	c.Writer.Header().Del("Content-Encoding")
+	c.File(path)
+}
+
 func Start() {
 	r := gin.New()
 
 	r.GET("/assets/*filepath", func(c *gin.Context) {
 		path := "./dist/assets" + c.Param("filepath")
 
-		if isBrotliCompressedAsset(path) && strings.Contains(c.GetHeader("Accept-Encoding"), "br") {
-			if _, err := os.Stat(path); err == nil {
-				c.Header("Content-Encoding", "br")
-				c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(path)))
-				c.File(path)
-				return
-			}
-		}
-
-		c.File(path)
+		serveFile(c, path, isBrotliCompressedAsset(path))
 	})
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
@@ -53,16 +73,19 @@ func Start() {
 			return
 		}
 
-		if strings.Contains(c.GetHeader("Accept-Encoding"), "br") {
-			if _, err := os.Stat("./dist/index.html"); err == nil {
-				c.Header("Content-Encoding", "br")
-				c.Header("Content-Type", "text/html; charset=utf-8")
-				c.File("./dist/index.html")
+		requestPath := c.Request.URL.Path
+		if filepath.Ext(requestPath) != "" {
+			path := frontendFilePath(requestPath)
+			if _, err := os.Stat(path); err == nil {
+				serveFile(c, path, isFrontendFile(path))
 				return
 			}
+
+			c.Status(404)
+			return
 		}
 
-		c.File("./dist/index.html")
+		serveFile(c, "./dist/index.html", true)
 	})
 
 	auth.InitAuthRouter(r)

@@ -76,6 +76,7 @@ func Upload(c *gin.Context) {
 
 	cmd := exec.Command(
 		"qpdf",
+		"--warning-exit-0",
 		"--linearize",
 		"--object-streams=generate",
 		"--stream-data=compress",

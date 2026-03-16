@@ -36,7 +36,7 @@ func OptimizePDF(inputPDF, outputPDF string) (string, error) {
 	if err := os.Remove(finalPDF); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("failed to remove stale temp file %s: %w", finalPDF, err)
 	}
-	if err := exec.Command(
+	if output, err := exec.Command(
 		"gs",
 		"-sDEVICE=pdfwrite",
 		"-dCompatibilityLevel=1.5",
@@ -49,19 +49,20 @@ func OptimizePDF(inputPDF, outputPDF string) (string, error) {
 		"-dBATCH",
 		"-sOutputFile="+tmpPDF,
 		inputPDF,
-	).Run(); err != nil {
-		return "", fmt.Errorf("ghostscript failed: %w", err)
+	).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("ghostscript failed: %w, output: %s", err, strings.TrimSpace(string(output)))
 	}
 
-	if err := exec.Command(
+	if output, err := exec.Command(
 		"qpdf",
+		"--warning-exit-0",
 		"--linearize",
 		"--object-streams=generate",
 		"--stream-data=compress",
 		tmpPDF,
 		finalPDF,
-	).Run(); err != nil {
-		return "", fmt.Errorf("qpdf failed: %w", err)
+	).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("qpdf failed: %w, output: %s", err, strings.TrimSpace(string(output)))
 	}
 
 	if err := os.Rename(finalPDF, outputPDF); err != nil {

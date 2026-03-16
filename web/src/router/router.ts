@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '@/views/Home.vue'
 import Search from '@/views/Search.vue'
-import PDFReader from '@/views/PDFReader.vue'
 import Auth from '@/views/Auth.vue'
 import D4S from '@/views/D4S.vue'
 import AdminSettings from '@/views/AdminSettings.vue'
@@ -41,7 +40,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/pdf/:id',
     name: 'PDF',
-    component: PDFReader,
+    component: () => import('@/views/PDFReader.vue'),
     meta: { requiresAuth: true, hideSidebar: false, forceSidebarClosed: true },
   },
   {
