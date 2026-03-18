@@ -11,8 +11,8 @@ const (
 
 type AnnotationAction struct {
 	ID           int `gorm:"primary_key;AUTO_INCREMENT"`
+	Action       Action
 	Data         string
 	CreatedAt    int64
-	Annotation   Annotation
-	AnnotationID int `gorm:"foreignKey:AnnotationID"`
+	AnnotationID *int
 }

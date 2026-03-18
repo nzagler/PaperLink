@@ -18,7 +18,7 @@ var Document = newDocumentRepo()
 
 func (n *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, error) {
 	var annotations []entity.Annotation
-	err := n.db.Where("ID = ?", documentID).Find(&annotations).Error
+	err := n.db.Where("document_id = ?", documentID).Find(&annotations).Error
 	return annotations, err
 }
 

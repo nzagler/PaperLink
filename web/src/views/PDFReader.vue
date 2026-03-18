@@ -133,7 +133,7 @@
               />
               <div
                 ref="annotationHostEl"
-                class="absolute inset-0 z-10 overflow-hidden"
+                class="absolute left-0 top-0 z-20"
               />
             </div>
           </div>
@@ -153,7 +153,7 @@
               variant="outline"
               class="w-full justify-start"
               :class="activeTool === 'select' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
-              :disabled="!overlayReady"
+              :disabled="!overlayReady || collabStatus !== 'connected'"
               @click="setActiveTool('select')"
             >
               <Pointer class="h-4 w-4" />
@@ -162,14 +162,24 @@
             <Button
               variant="outline"
               class="w-full justify-start"
-              :disabled="!overlayReady"
+              :disabled="!overlayReady || collabStatus !== 'connected'"
               @click="addTextbox"
             >
               <Type class="h-4 w-4" />
               Add text box
             </Button>
+            <Button
+              variant="outline"
+              class="w-full justify-start border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/70 dark:text-red-300 dark:hover:bg-red-950/40 dark:hover:text-red-200"
+              :disabled="!overlayReady || collabStatus !== 'connected' || selectedAnnotationId === null"
+              @click="removeSelectedAnnotation"
+            >
+              <Trash2 class="h-4 w-4" />
+              Remove selected
+            </Button>
             <div class="rounded-xl border border-dashed border-neutral-200 p-3 text-xs text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-              More tools will plug into the same annotation layer later.
+              <span v-if="collabStatus === 'connected'">More tools will plug into the same annotation layer later.</span>
+              <span v-else>Annotation editing is available once live sync is connected.</span>
             </div>
           </CardContent>
         </Card>
@@ -186,7 +196,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LoaderCircle, Pointer, Type, Wifi, WifiOff } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LoaderCircle, Pointer, Trash2, Type, Wifi, WifiOff } from 'lucide-vue-next'
 
 const {
   pageCount,
@@ -198,6 +208,12 @@ const {
   collabStatus,
   collabError,
   pageRenderVersion,
+  subscribeCollabMessages,
+  requestPageAnnotations,
+  createAnnotation,
+  updateAnnotation,
+  moveAnnotation,
+  deleteAnnotation,
   onThumbnailScroll,
   go,
   goFirst,
@@ -211,12 +227,21 @@ const {
   annotationCount,
   activeTool,
   overlayReady,
+  selectedAnnotationId,
   setActiveTool,
   addTextbox,
+  removeSelectedAnnotation,
 } = usePdfAnnotationOverlay({
   currentPage,
   pdfCanvasEl: canvasEl,
   pageRenderVersion,
+  collabStatus,
+  subscribeCollabMessages,
+  requestPageAnnotations,
+  createAnnotation,
+  updateAnnotation,
+  moveAnnotation,
+  deleteAnnotation,
 })
 
 const pageInput = ref('1')

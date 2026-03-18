@@ -37,12 +37,22 @@ type TokenResult struct {
 }
 
 type outboundMessage struct {
-	Type       string          `json:"type"`
-	DocumentID string          `json:"documentId,omitempty"`
-	User       *User           `json:"user,omitempty"`
-	Users      []User          `json:"users,omitempty"`
-	Payload    json.RawMessage `json:"payload,omitempty"`
-	Error      string          `json:"error,omitempty"`
+	Type         string              `json:"type"`
+	DocumentID   string              `json:"documentId,omitempty"`
+	User         *User               `json:"user,omitempty"`
+	Users        []User              `json:"users,omitempty"`
+	Page         *int64              `json:"page,omitempty"`
+	Annotation   *annotationMessage  `json:"annotation,omitempty"`
+	Annotations  []annotationMessage `json:"annotations,omitempty"`
+	AnnotationID *int                `json:"annotationId,omitempty"`
+	Error        string              `json:"error,omitempty"`
+}
+
+type inboundMessage struct {
+	Type         string             `json:"type"`
+	Page         *int64             `json:"page,omitempty"`
+	Annotation   *annotationMessage `json:"annotation,omitempty"`
+	AnnotationID *int               `json:"annotationId,omitempty"`
 }
 
 type singleUseToken struct {
@@ -64,17 +74,19 @@ type room struct {
 }
 
 type Service struct {
-	mu       sync.RWMutex
-	tokenTTL time.Duration
-	tokens   map[string]singleUseToken
-	rooms    map[string]*room
+	mu          sync.RWMutex
+	tokenTTL    time.Duration
+	tokens      map[string]singleUseToken
+	rooms       map[string]*room
+	annotations *AnnotationStore
 }
 
 func NewService() *Service {
 	return &Service{
-		tokenTTL: 2 * time.Minute,
-		tokens:   make(map[string]singleUseToken),
-		rooms:    make(map[string]*room),
+		tokenTTL:    2 * time.Minute,
+		tokens:      make(map[string]singleUseToken),
+		rooms:       make(map[string]*room),
+		annotations: NewAnnotationStore(),
 	}
 }
 
@@ -140,12 +152,15 @@ func (s *Service) ValidateConnection(documentID, token string) error {
 func (s *Service) HandleConnection(documentID, token string, ws *websocket.Conn) error {
 	user, err := s.consumeToken(documentID, token)
 	if err != nil {
-		_ = websocket.Message.Send(ws, string(mustMarshal(outboundMessage{
-			Type:  "error",
-			Error: err.Error(),
-		})))
+		s.sendError(ws, err.Error())
 		return err
 	}
+
+	if err := s.annotations.EnsureDocumentLoaded(documentID); err != nil {
+		s.sendError(ws, err.Error())
+		return err
+	}
+	s.annotations.MarkRoomActive(documentID)
 
 	client, users := s.joinRoom(documentID, ws, user)
 	defer s.leaveRoom(client)
@@ -181,12 +196,117 @@ func (s *Service) HandleConnection(documentID, token string, ws *websocket.Conn)
 			continue
 		}
 
+		var message inboundMessage
+		if err := json.Unmarshal(payload, &message); err != nil {
+			client.queue(outboundMessage{
+				Type:  "error",
+				Error: "failed to parse message",
+			})
+			continue
+		}
+
+		if err := s.handleClientMessage(documentID, client, message); err != nil {
+			client.queue(outboundMessage{
+				Type:  "error",
+				Error: err.Error(),
+			})
+		}
+	}
+}
+
+func (s *Service) handleClientMessage(documentID string, client *client, message inboundMessage) error {
+	switch message.Type {
+	case "annotations:get":
+		if message.Page == nil {
+			return ErrInvalidAnnotation
+		}
+
+		annotations, err := s.annotations.GetPageAnnotations(documentID, *message.Page)
+		if err != nil {
+			return err
+		}
+
+		client.queue(outboundMessage{
+			Type:        "annotations:page",
+			DocumentID:  documentID,
+			Page:        message.Page,
+			Annotations: annotations,
+		})
+		return nil
+
+	case "annotation:create":
+		if message.Annotation == nil {
+			return ErrInvalidAnnotation
+		}
+
+		annotation, err := s.annotations.CreateAnnotation(documentID, *message.Annotation)
+		if err != nil {
+			return err
+		}
+
 		s.broadcast(documentID, outboundMessage{
-			Type:       "event",
+			Type:       "annotation:created",
 			DocumentID: documentID,
-			User:       &user,
-			Payload:    payload,
+			User:       &client.user,
+			Annotation: annotation,
 		}, nil)
+		return nil
+
+	case "annotation:update":
+		if message.Annotation == nil {
+			return ErrInvalidAnnotation
+		}
+
+		annotation, err := s.annotations.UpdateAnnotation(documentID, *message.Annotation)
+		if err != nil {
+			return err
+		}
+
+		s.broadcast(documentID, outboundMessage{
+			Type:       "annotation:updated",
+			DocumentID: documentID,
+			User:       &client.user,
+			Annotation: annotation,
+		}, nil)
+		return nil
+
+	case "annotation:move":
+		if message.Annotation == nil {
+			return ErrInvalidAnnotation
+		}
+
+		annotation, err := s.annotations.MoveAnnotation(documentID, *message.Annotation)
+		if err != nil {
+			return err
+		}
+
+		s.broadcast(documentID, outboundMessage{
+			Type:       "annotation:moved",
+			DocumentID: documentID,
+			User:       &client.user,
+			Annotation: annotation,
+		}, nil)
+		return nil
+
+	case "annotation:delete":
+		if message.AnnotationID == nil {
+			return ErrInvalidAnnotation
+		}
+
+		if err := s.annotations.DeleteAnnotation(documentID, *message.AnnotationID); err != nil {
+			return err
+		}
+
+		s.broadcast(documentID, outboundMessage{
+			Type:         "annotation:deleted",
+			DocumentID:   documentID,
+			User:         &client.user,
+			AnnotationID: message.AnnotationID,
+		}, nil)
+		return nil
+
+	default:
+		return errors.New("unknown message type")
 	}
 }
 
@@ -272,14 +392,20 @@ func (s *Service) joinRoom(documentID string, ws *websocket.Conn, user User) (*c
 }
 
 func (s *Service) leaveRoom(currentClient *client) {
+	var flushDocumentID string
+
 	s.mu.Lock()
 	currentRoom := currentClient.room
 	delete(currentRoom.clients, currentClient)
 
 	if len(currentRoom.clients) == 0 {
 		delete(s.rooms, currentRoom.documentID)
+		flushDocumentID = currentRoom.documentID
 		close(currentClient.send)
 		s.mu.Unlock()
+		if flushDocumentID != "" {
+			s.annotations.MarkRoomInactive(flushDocumentID)
+		}
 		return
 	}
 
@@ -320,6 +446,13 @@ func (s *Service) cleanupExpiredTokensLocked(now time.Time) {
 			delete(s.tokens, token)
 		}
 	}
+}
+
+func (s *Service) sendError(ws *websocket.Conn, message string) {
+	_ = websocket.Message.Send(ws, string(mustMarshal(outboundMessage{
+		Type:  "error",
+		Error: message,
+	})))
 }
 
 func (c *client) writePump() {

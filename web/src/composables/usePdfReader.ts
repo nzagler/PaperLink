@@ -4,10 +4,10 @@ import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?worker'
 import { apiFetch } from '@/auth/api'
 import { accessToken } from '@/auth/auth'
+import type { CollabClientMessage, CollabServerMessage, CollabStatus } from '@/lib/pdf_collab'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new pdfWorker()
-
-type CollabStatus = 'idle' | 'connecting' | 'connected' | 'disconnected'
+type CollabMessageListener = (message: CollabServerMessage) => void
 
 export function usePdfReader() {
   const route = useRoute()
@@ -33,6 +33,7 @@ export function usePdfReader() {
   let renderToken = 0
   let collabToken = 0
   let collabSocket: WebSocket | null = null
+  const collabListeners = new Set<CollabMessageListener>()
 
   function clearThumbnailBatchState() {
     for (const k of Object.keys(thumbnailBatchLocks)) delete thumbnailBatchLocks[k]
@@ -88,6 +89,66 @@ export function usePdfReader() {
     }
   }
 
+  function emitCollabMessage(message: CollabServerMessage) {
+    for (const listener of Array.from(collabListeners)) {
+      listener(message)
+    }
+  }
+
+  function subscribeCollabMessages(listener: CollabMessageListener) {
+    collabListeners.add(listener)
+    return () => {
+      collabListeners.delete(listener)
+    }
+  }
+
+  function sendCollabMessage(message: CollabClientMessage) {
+    if (!collabSocket || collabSocket.readyState !== WebSocket.OPEN) {
+      return false
+    }
+
+    collabSocket.send(JSON.stringify(message))
+    return true
+  }
+
+  function requestPageAnnotations(page: number) {
+    return sendCollabMessage({
+      type: 'annotations:get',
+      page,
+    })
+  }
+
+  function createAnnotation(annotation: CollabClientMessage['annotation']) {
+    if (!annotation) return false
+    return sendCollabMessage({
+      type: 'annotation:create',
+      annotation,
+    })
+  }
+
+  function updateAnnotation(annotation: CollabClientMessage['annotation']) {
+    if (!annotation) return false
+    return sendCollabMessage({
+      type: 'annotation:update',
+      annotation,
+    })
+  }
+
+  function moveAnnotation(annotation: CollabClientMessage['annotation']) {
+    if (!annotation) return false
+    return sendCollabMessage({
+      type: 'annotation:move',
+      annotation,
+    })
+  }
+
+  function deleteAnnotation(annotationId: number) {
+    return sendCollabMessage({
+      type: 'annotation:delete',
+      annotationId,
+    })
+  }
+
   async function connectCollab() {
     const documentID = pdfID.value
     if (!documentID) {
@@ -131,10 +192,11 @@ export function usePdfReader() {
         if (token !== collabToken || collabSocket !== socket) return
 
         try {
-          const message = JSON.parse(String(event.data ?? '{}'))
+          const message = JSON.parse(String(event.data ?? '{}')) as CollabServerMessage
           if (message?.type === 'error' && typeof message.error === 'string') {
-            setCollabDisconnected(message.error)
+            collabError.value = message.error
           }
+          emitCollabMessage(message)
         } catch {
         }
       }
@@ -405,6 +467,12 @@ export function usePdfReader() {
     collabStatus,
     collabError,
     pageRenderVersion,
+    subscribeCollabMessages,
+    requestPageAnnotations,
+    createAnnotation,
+    updateAnnotation,
+    moveAnnotation,
+    deleteAnnotation,
     onThumbnailScroll,
     go,
     goFirst,
