@@ -6,6 +6,7 @@ import (
 	"paperlink/db/entity"
 	"paperlink/db/repo"
 	"paperlink/server/routes"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,17 +62,31 @@ func Update(c *gin.Context) {
 		doc.Description = *req.Description
 	}
 
+	updates := map[string]any{}
+	if req.Name != nil {
+		updates["name"] = doc.Name
+	}
+	if req.Description != nil {
+		updates["description"] = doc.Description
+	}
+	if req.DirectoryID != nil {
+		updates["directory_id"] = doc.DirectoryID
+	}
+
+	replaceTags := false
+	var finalTags []entity.Tag
 	if req.Tags != nil {
-		finalTags, err := ensureTagsExist(*req.Tags)
+		replaceTags = true
+		var err error
+		finalTags, err = ensureTagsExist(*req.Tags)
 		if err != nil {
 			log.Errorf("failed processing tags: %v", err)
 			routes.JSONError(c, http.StatusInternalServerError, "failed to process tags")
 			return
 		}
-		doc.Tags = finalTags
 	}
 
-	if err := repo.Document.SaveWithAssociations(doc); err != nil {
+	if err := repo.Document.UpdateFieldsAndTags(doc, updates, finalTags, replaceTags); err != nil {
 		log.Errorf("failed to update document: %v", err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to update document")
 		return
@@ -92,28 +107,31 @@ func ensureTagsExist(names []string) ([]entity.Tag, error) {
 
 	existing := make(map[string]entity.Tag, len(dbTags))
 	for _, t := range dbTags {
-		existing[t.Name] = t
+		existing[strings.ToLower(t.Name)] = t
 	}
 
 	finalTags := make([]entity.Tag, 0, len(names))
 	seen := map[string]bool{}
 
 	for _, name := range names {
-		if name == "" {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
 			continue
 		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
 
-		if t, ok := existing[name]; ok {
+		key := strings.ToLower(trimmed)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if t, ok := existing[key]; ok {
 			finalTags = append(finalTags, t)
 			continue
 		}
 
 		newTag := entity.Tag{
-			Name:  name,
+			Name:  trimmed,
 			Color: entity.TagColors[rand.Intn(len(entity.TagColors))],
 		}
 
@@ -121,7 +139,7 @@ func ensureTagsExist(names []string) ([]entity.Tag, error) {
 			return nil, err
 		}
 
-		existing[name] = newTag
+		existing[key] = newTag
 		finalTags = append(finalTags, newTag)
 	}
 

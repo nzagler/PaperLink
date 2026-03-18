@@ -80,3 +80,23 @@ func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entit
 func (r *DocumentRepo) SaveWithAssociations(doc *entity.Document) error {
 	return r.db.Session(&gorm.Session{FullSaveAssociations: true}).Save(doc).Error
 }
+
+func (r *DocumentRepo) UpdateFieldsAndTags(doc *entity.Document, updates map[string]any, tags []entity.Tag, replaceTags bool) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(&entity.Document{}).Where("id = ?", doc.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+
+		if replaceTags {
+			target := &entity.Document{ID: doc.ID}
+			if err := tx.Model(target).Association("Tags").Replace(tags); err != nil {
+				return err
+			}
+			doc.Tags = tags
+		}
+
+		return nil
+	})
+}

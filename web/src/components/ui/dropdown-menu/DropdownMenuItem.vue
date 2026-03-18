@@ -11,9 +11,8 @@ const forwarded = useForwardProps(props)
 
 const itemClass = computed(() =>
   cn(
-    "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors",
-    "focus:bg-neutral-100 focus:text-neutral-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-    "dark:focus:bg-neutral-900 dark:focus:text-neutral-50",
+    "relative flex cursor-default select-none items-center rounded-md px-2.5 py-1.5 text-sm outline-none transition-colors",
+    "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
     props.inset ? "pl-8" : "",
     props.class,
   ),
