@@ -148,37 +148,193 @@
               Page {{ currentPage }} · {{ annotationCount }} annotations
             </div>
           </CardHeader>
-          <CardContent class="space-y-3 pt-6">
-            <Button
-              variant="outline"
-              class="w-full justify-start"
-              :class="activeTool === 'select' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
-              :disabled="!overlayReady || collabStatus !== 'connected'"
-              @click="setActiveTool('select')"
-            >
-              <Pointer class="h-4 w-4" />
-              Select
-            </Button>
-            <Button
-              variant="outline"
-              class="w-full justify-start"
-              :disabled="!overlayReady || collabStatus !== 'connected'"
-              @click="addTextbox"
-            >
-              <Type class="h-4 w-4" />
-              Add text box
-            </Button>
-            <Button
-              variant="outline"
-              class="w-full justify-start border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-900/70 dark:text-red-300 dark:hover:bg-red-950/40 dark:hover:text-red-200"
-              :disabled="!overlayReady || collabStatus !== 'connected' || selectedAnnotationId === null"
-              @click="removeSelectedAnnotation"
-            >
-              <Trash2 class="h-4 w-4" />
-              Remove selected
-            </Button>
+          <CardContent class="space-y-4 pt-6">
+            <div class="grid grid-cols-3 gap-2">
+              <Button
+                variant="outline"
+                class="h-auto flex-col gap-1.5 px-3 py-3"
+                :class="activeTool === 'select' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                :disabled="!overlayReady || collabStatus !== 'connected'"
+                @click="setActiveTool('select')"
+              >
+                <Pointer class="h-4 w-4" />
+                <span class="text-xs">Select</span>
+              </Button>
+              <Button
+                variant="outline"
+                class="h-auto flex-col gap-1.5 px-3 py-3"
+                :class="activeTool === 'textbox' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                :disabled="!overlayReady || collabStatus !== 'connected'"
+                @click="setActiveTool('textbox')"
+              >
+                <Type class="h-4 w-4" />
+                <span class="text-xs">Text Box</span>
+              </Button>
+              <Button
+                variant="outline"
+                class="h-auto flex-col gap-1.5 px-3 py-3"
+                :class="activeTool === 'draw' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                :disabled="!overlayReady || collabStatus !== 'connected'"
+                @click="setActiveTool('draw')"
+              >
+                <Pencil class="h-4 w-4" />
+                <span class="text-xs">Draw</span>
+              </Button>
+            </div>
+
+            <div class="space-y-4 rounded-2xl border border-neutral-200 p-4 dark:border-neutral-800">
+              <template v-if="activeTool === 'select'">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500 dark:text-neutral-400">
+                    Selection
+                  </div>
+                  <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {{ selectedAnnotationType === 'TEXTBOX'
+                      ? 'Adjust the selected textbox.'
+                      : selectedAnnotationType === 'CANVAS'
+                        ? 'Adjust the selected stroke.'
+                        : 'Pick an annotation on the page to edit or remove it.' }}
+                  </div>
+                </div>
+
+                <template v-if="selectedAnnotationType === 'TEXTBOX'">
+                  <div class="space-y-2">
+                    <div class="text-xs text-neutral-600 dark:text-neutral-300">Font color</div>
+                    <AnnotationColorPicker
+                      :model-value="textboxFill"
+                      :disabled="!overlayReady || collabStatus !== 'connected'"
+                      @update:model-value="setTextboxFill"
+                    />
+                  </div>
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300">
+                      <span>Font size</span>
+                      <span>{{ Math.round(textboxFontSize) }} px</span>
+                    </div>
+                    <Slider
+                      :model-value="[textboxFontSize]"
+                      :min="12"
+                      :max="48"
+                      :step="1"
+                      :disabled="!overlayReady || collabStatus !== 'connected'"
+                      @update:model-value="setTextboxFontSize(Number($event[0] ?? textboxFontSize))"
+                    />
+                  </div>
+                </template>
+
+                <template v-else-if="selectedAnnotationType === 'CANVAS'">
+                  <div class="space-y-2">
+                    <div class="text-xs text-neutral-600 dark:text-neutral-300">Stroke color</div>
+                    <AnnotationColorPicker
+                      :model-value="canvasStroke"
+                      :disabled="!overlayReady || collabStatus !== 'connected'"
+                      @update:model-value="setCanvasStroke"
+                    />
+                  </div>
+                  <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300">
+                      <span>Stroke width</span>
+                      <span>{{ canvasStrokeWidth.toFixed(1) }} px</span>
+                    </div>
+                    <Slider
+                      :model-value="[canvasStrokeWidth]"
+                      :min="1.5"
+                      :max="14"
+                      :step="0.5"
+                      :disabled="!overlayReady || collabStatus !== 'connected'"
+                      @update:model-value="setCanvasStrokeWidth(Number($event[0] ?? canvasStrokeWidth))"
+                    />
+                  </div>
+                </template>
+
+                <Button
+                  variant="destructive"
+                  class="w-full justify-start"
+                  :disabled="!overlayReady || collabStatus !== 'connected' || selectedAnnotationId === null"
+                  @click="removeSelectedAnnotation"
+                >
+                  <Trash2 class="h-4 w-4" />
+                  Delete selected
+                </Button>
+              </template>
+
+              <template v-else-if="activeTool === 'textbox'">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500 dark:text-neutral-400">
+                    Text Box
+                  </div>
+                  <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Configure the next textbox, then place it on the page.
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div class="text-xs text-neutral-600 dark:text-neutral-300">Font color</div>
+                  <AnnotationColorPicker
+                    :model-value="textboxFill"
+                    :disabled="!overlayReady || collabStatus !== 'connected'"
+                    @update:model-value="setTextboxFill"
+                  />
+                </div>
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300">
+                    <span>Font size</span>
+                    <span>{{ Math.round(textboxFontSize) }} px</span>
+                  </div>
+                  <Slider
+                    :model-value="[textboxFontSize]"
+                    :min="12"
+                    :max="48"
+                    :step="1"
+                    :disabled="!overlayReady || collabStatus !== 'connected'"
+                    @update:model-value="setTextboxFontSize(Number($event[0] ?? textboxFontSize))"
+                  />
+                </div>
+                <Button
+                  class="w-full justify-start"
+                  :disabled="!overlayReady || collabStatus !== 'connected'"
+                  @click="addTextbox"
+                >
+                  <Type class="h-4 w-4" />
+                  Place text box
+                </Button>
+              </template>
+
+              <template v-else>
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500 dark:text-neutral-400">
+                    Draw
+                  </div>
+                  <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Set the stroke style, then draw directly on the page.
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div class="text-xs text-neutral-600 dark:text-neutral-300">Stroke color</div>
+                  <AnnotationColorPicker
+                    :model-value="canvasStroke"
+                    :disabled="!overlayReady || collabStatus !== 'connected'"
+                    @update:model-value="setCanvasStroke"
+                  />
+                </div>
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between text-xs text-neutral-600 dark:text-neutral-300">
+                    <span>Stroke width</span>
+                    <span>{{ canvasStrokeWidth.toFixed(1) }} px</span>
+                  </div>
+                  <Slider
+                    :model-value="[canvasStrokeWidth]"
+                    :min="1.5"
+                    :max="14"
+                    :step="0.5"
+                    :disabled="!overlayReady || collabStatus !== 'connected'"
+                    @update:model-value="setCanvasStrokeWidth(Number($event[0] ?? canvasStrokeWidth))"
+                  />
+                </div>
+              </template>
+            </div>
+
             <div class="rounded-xl border border-dashed border-neutral-200 p-3 text-xs text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-              <span v-if="collabStatus === 'connected'">More tools will plug into the same annotation layer later.</span>
+              <span v-if="collabStatus === 'connected'">Use `Select` to edit or delete existing annotations, `Text Box` to place new text, and `Draw` for freehand `CANVAS` annotations.</span>
               <span v-else>Annotation editing is available once live sync is connected.</span>
             </div>
           </CardContent>
@@ -196,7 +352,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LoaderCircle, Pointer, Trash2, Type, Wifi, WifiOff } from 'lucide-vue-next'
+import { Slider } from '@/components/ui/slider'
+import AnnotationColorPicker from '@/components/own/pdf/AnnotationColorPicker.vue'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LoaderCircle, Pencil, Pointer, Trash2, Type, Wifi, WifiOff } from 'lucide-vue-next'
 
 const {
   pageCount,
@@ -228,7 +386,16 @@ const {
   activeTool,
   overlayReady,
   selectedAnnotationId,
+  selectedAnnotationType,
+  textboxFill,
+  textboxFontSize,
+  canvasStroke,
+  canvasStrokeWidth,
   setActiveTool,
+  setTextboxFill,
+  setTextboxFontSize,
+  setCanvasStroke,
+  setCanvasStrokeWidth,
   addTextbox,
   removeSelectedAnnotation,
 } = usePdfAnnotationOverlay({

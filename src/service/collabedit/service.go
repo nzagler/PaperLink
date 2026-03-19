@@ -1,11 +1,8 @@
 package collabedit
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"sync"
 	"time"
 
@@ -55,37 +52,17 @@ type inboundMessage struct {
 	AnnotationID *int               `json:"annotationId,omitempty"`
 }
 
-type singleUseToken struct {
-	DocumentID string
-	User       User
-	ExpiresAt  time.Time
-}
-
-type client struct {
-	conn *websocket.Conn
-	room *room
-	user User
-	send chan []byte
-}
-
-type room struct {
-	documentID string
-	clients    map[*client]struct{}
-}
-
 type Service struct {
 	mu          sync.RWMutex
-	tokenTTL    time.Duration
-	tokens      map[string]singleUseToken
 	rooms       map[string]*room
+	tokens      *tokenStore
 	annotations *AnnotationStore
 }
 
 func NewService() *Service {
 	return &Service{
-		tokenTTL:    2 * time.Minute,
-		tokens:      make(map[string]singleUseToken),
 		rooms:       make(map[string]*room),
+		tokens:      newTokenStore(2 * time.Minute),
 		annotations: NewAnnotationStore(),
 	}
 }
@@ -98,59 +75,18 @@ func (s *Service) CreateSingleUseToken(documentID string, userID int) (*TokenRes
 		return nil, err
 	}
 
-	token, err := generateToken()
-	if err != nil {
-		return nil, err
-	}
-
-	expiresAt := time.Now().Add(s.tokenTTL)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.cleanupExpiredTokensLocked(time.Now())
-	s.tokens[token] = singleUseToken{
-		DocumentID: documentID,
-		User: User{
-			UserID:   user.ID,
-			Username: user.Username,
-		},
-		ExpiresAt: expiresAt,
-	}
-
-	return &TokenResult{
-		Token:     token,
-		ExpiresAt: expiresAt,
-	}, nil
+	return s.tokens.create(documentID, User{
+		UserID:   user.ID,
+		Username: user.Username,
+	})
 }
 
 func (s *Service) ValidateConnection(documentID, token string) error {
-	if token == "" {
-		return ErrTokenRequired
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.tokens[token]
-	if !ok {
-		return ErrTokenInvalid
-	}
-
-	if time.Now().After(entry.ExpiresAt) {
-		delete(s.tokens, token)
-		return ErrTokenExpired
-	}
-
-	if entry.DocumentID != documentID {
-		return ErrTokenInvalid
-	}
-
-	return nil
+	return s.tokens.validate(documentID, token)
 }
 
 func (s *Service) HandleConnection(documentID, token string, ws *websocket.Conn) error {
-	user, err := s.consumeToken(documentID, token)
+	user, err := s.tokens.consume(documentID, token)
 	if err != nil {
 		s.sendError(ws, err.Error())
 		return err
@@ -162,59 +98,26 @@ func (s *Service) HandleConnection(documentID, token string, ws *websocket.Conn)
 	}
 	s.annotations.MarkRoomActive(documentID)
 
-	client, users := s.joinRoom(documentID, ws, user)
-	defer s.leaveRoom(client)
-
-	go client.writePump()
-
-	client.queue(outboundMessage{
-		Type:       "room_state",
-		DocumentID: documentID,
-		Users:      users,
-	})
-
-	s.broadcast(documentID, outboundMessage{
-		Type:       "user_joined",
-		DocumentID: documentID,
-		User:       &user,
-	}, client)
-
-	for {
-		var payload []byte
-		if err := websocket.Message.Receive(ws, &payload); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
-
-		if !json.Valid(payload) {
-			client.queue(outboundMessage{
-				Type:  "error",
-				Error: "payload must be valid json",
-			})
-			continue
-		}
-
-		var message inboundMessage
-		if err := json.Unmarshal(payload, &message); err != nil {
-			client.queue(outboundMessage{
-				Type:  "error",
-				Error: "failed to parse message",
-			})
-			continue
-		}
-
-		if err := s.handleClientMessage(documentID, client, message); err != nil {
-			client.queue(outboundMessage{
-				Type:  "error",
-				Error: err.Error(),
-			})
-		}
-	}
+	currentRoom := s.getOrCreateRoom(documentID)
+	return currentRoom.handleConnection(s, ws, user)
 }
 
-func (s *Service) handleClientMessage(documentID string, client *client, message inboundMessage) error {
+func (s *Service) handleIncomingPayload(currentRoom *room, client *client, payload []byte) error {
+	if !json.Valid(payload) {
+		return errors.New("payload must be valid json")
+	}
+
+	var message inboundMessage
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return errors.New("failed to parse message")
+	}
+
+	return s.handleClientMessage(currentRoom, client, message)
+}
+
+func (s *Service) handleClientMessage(currentRoom *room, client *client, message inboundMessage) error {
+	documentID := currentRoom.documentID
+
 	switch message.Type {
 	case "annotations:get":
 		if message.Page == nil {
@@ -244,7 +147,7 @@ func (s *Service) handleClientMessage(documentID string, client *client, message
 			return err
 		}
 
-		s.broadcast(documentID, outboundMessage{
+		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:created",
 			DocumentID: documentID,
 			User:       &client.user,
@@ -262,7 +165,7 @@ func (s *Service) handleClientMessage(documentID string, client *client, message
 			return err
 		}
 
-		s.broadcast(documentID, outboundMessage{
+		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:updated",
 			DocumentID: documentID,
 			User:       &client.user,
@@ -280,7 +183,7 @@ func (s *Service) handleClientMessage(documentID string, client *client, message
 			return err
 		}
 
-		s.broadcast(documentID, outboundMessage{
+		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:moved",
 			DocumentID: documentID,
 			User:       &client.user,
@@ -297,7 +200,7 @@ func (s *Service) handleClientMessage(documentID string, client *client, message
 			return err
 		}
 
-		s.broadcast(documentID, outboundMessage{
+		currentRoom.broadcast(outboundMessage{
 			Type:         "annotation:deleted",
 			DocumentID:   documentID,
 			User:         &client.user,
@@ -336,116 +239,32 @@ type repoUser struct {
 	Username string
 }
 
-func (s *Service) consumeToken(documentID, token string) (User, error) {
-	if token == "" {
-		return User{}, ErrTokenRequired
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, ok := s.tokens[token]
-	if !ok {
-		return User{}, ErrTokenInvalid
-	}
-
-	if time.Now().After(entry.ExpiresAt) {
-		delete(s.tokens, token)
-		return User{}, ErrTokenExpired
-	}
-
-	if entry.DocumentID != documentID {
-		return User{}, ErrTokenInvalid
-	}
-
-	delete(s.tokens, token)
-	return entry.User, nil
-}
-
-func (s *Service) joinRoom(documentID string, ws *websocket.Conn, user User) (*client, []User) {
+func (s *Service) getOrCreateRoom(documentID string) *room {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	currentRoom, ok := s.rooms[documentID]
 	if !ok {
-		currentRoom = &room{
-			documentID: documentID,
-			clients:    make(map[*client]struct{}),
-		}
+		currentRoom = newRoom(documentID)
 		s.rooms[documentID] = currentRoom
 	}
 
-	currentClient := &client{
-		conn: ws,
-		room: currentRoom,
-		user: user,
-		send: make(chan []byte, 32),
-	}
-	currentRoom.clients[currentClient] = struct{}{}
-
-	users := make([]User, 0, len(currentRoom.clients))
-	for member := range currentRoom.clients {
-		users = append(users, member.user)
-	}
-
-	return currentClient, users
+	return currentRoom
 }
 
-func (s *Service) leaveRoom(currentClient *client) {
-	var flushDocumentID string
-
+func (s *Service) removeRoomIfEmpty(currentRoom *room) bool {
 	s.mu.Lock()
-	currentRoom := currentClient.room
-	delete(currentRoom.clients, currentClient)
+	defer s.mu.Unlock()
 
-	if len(currentRoom.clients) == 0 {
-		delete(s.rooms, currentRoom.documentID)
-		flushDocumentID = currentRoom.documentID
-		close(currentClient.send)
-		s.mu.Unlock()
-		if flushDocumentID != "" {
-			s.annotations.MarkRoomInactive(flushDocumentID)
-		}
-		return
+	if s.rooms[currentRoom.documentID] != currentRoom {
+		return false
+	}
+	if !currentRoom.isEmpty() {
+		return false
 	}
 
-	payload := mustMarshal(outboundMessage{
-		Type:       "user_left",
-		DocumentID: currentRoom.documentID,
-		User:       &currentClient.user,
-	})
-
-	for member := range currentRoom.clients {
-		member.queueBytes(payload)
-	}
-	close(currentClient.send)
-	s.mu.Unlock()
-}
-
-func (s *Service) broadcast(documentID string, message outboundMessage, exclude *client) {
-	payload := mustMarshal(message)
-
-	s.mu.RLock()
-	currentRoom := s.rooms[documentID]
-	if currentRoom == nil {
-		s.mu.RUnlock()
-		return
-	}
-	for member := range currentRoom.clients {
-		if member == exclude {
-			continue
-		}
-		member.queueBytes(payload)
-	}
-	s.mu.RUnlock()
-}
-
-func (s *Service) cleanupExpiredTokensLocked(now time.Time) {
-	for token, entry := range s.tokens {
-		if now.After(entry.ExpiresAt) {
-			delete(s.tokens, token)
-		}
-	}
+	delete(s.rooms, currentRoom.documentID)
+	return true
 }
 
 func (s *Service) sendError(ws *websocket.Conn, message string) {
@@ -453,41 +272,4 @@ func (s *Service) sendError(ws *websocket.Conn, message string) {
 		Type:  "error",
 		Error: message,
 	})))
-}
-
-func (c *client) writePump() {
-	for payload := range c.send {
-		if err := websocket.Message.Send(c.conn, string(payload)); err != nil {
-			return
-		}
-	}
-}
-
-func (c *client) queue(message outboundMessage) {
-	c.queueBytes(mustMarshal(message))
-}
-
-func (c *client) queueBytes(payload []byte) {
-	select {
-	case c.send <- payload:
-	default:
-		log.Warnf("dropping websocket client for user %d due to backpressure", c.user.UserID)
-		_ = c.conn.Close()
-	}
-}
-
-func mustMarshal(message outboundMessage) []byte {
-	payload, err := json.Marshal(message)
-	if err != nil {
-		return []byte(`{"type":"error","error":"failed to marshal message"}`)
-	}
-	return payload
-}
-
-func generateToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

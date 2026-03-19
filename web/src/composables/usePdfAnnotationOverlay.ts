@@ -1,13 +1,16 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
-import { Canvas as FabricCanvas, Textbox } from 'fabric'
+import { Canvas as FabricCanvas, Path as FabricPath, PencilBrush, Textbox } from 'fabric'
 import {
   annotationTools,
   cloneAnnotation,
+  createCanvasAnnotation,
   createTextboxAnnotation,
   fromCollabAnnotation,
   toCollabAnnotation,
   type AnnotationTool,
+  type CanvasPathCommand,
   type PDFAnnotation,
+  type PDFCanvasAnnotation,
 } from '@/lib/pdf_annotations'
 import type { CollabServerMessage, CollabStatus } from '@/lib/pdf_collab'
 
@@ -24,10 +27,19 @@ type OverlayOptions = {
   deleteAnnotation: (annotationId: number) => boolean
 }
 
-type FabricTextboxWithId = Textbox & {
+type FabricAnnotationMeta = {
   annotationId?: number
   pendingCreate?: boolean
 }
+
+type FabricTextboxWithId = Textbox & FabricAnnotationMeta
+type FabricPathWithId = FabricPath & FabricAnnotationMeta
+type FabricAnnotationObject = FabricTextboxWithId | FabricPathWithId
+
+const DEFAULT_TEXTBOX_FILL = '#111827'
+const DEFAULT_TEXTBOX_FONT_SIZE = 0.032
+const DEFAULT_DRAW_COLOR = '#ef4444'
+const DEFAULT_DRAW_STROKE_WIDTH = 0.004
 
 export function usePdfAnnotationOverlay({
   currentPage,
@@ -46,15 +58,25 @@ export function usePdfAnnotationOverlay({
   const annotationCount = ref(0)
   const overlayReady = ref(false)
   const selectedAnnotationId = ref<number | null>(null)
+  const selectedAnnotationType = ref<PDFAnnotation['type'] | null>(null)
+  const textboxFill = ref(DEFAULT_TEXTBOX_FILL)
+  const textboxFontSize = ref(18)
+  const canvasStroke = ref(DEFAULT_DRAW_COLOR)
+  const canvasStrokeWidth = ref(2)
 
   const annotationsByPage = new Map<number, Map<number, PDFAnnotation>>()
   const annotationPageIndex = new Map<number, number>()
-  const renderedTextboxes = new Map<number, FabricTextboxWithId>()
+  const renderedObjects = new Map<number, FabricAnnotationObject>()
+  let textboxDefaultFill = DEFAULT_TEXTBOX_FILL
+  let textboxDefaultFontSize = DEFAULT_TEXTBOX_FONT_SIZE
+  let canvasDefaultStroke = DEFAULT_DRAW_COLOR
+  let canvasDefaultStrokeWidth = DEFAULT_DRAW_STROKE_WIDTH
   let fabricCanvas: FabricCanvas | null = null
   let resizeObserver: ResizeObserver | null = null
   let loadToken = 0
   let isHydrating = false
   let resizeFrame = 0
+  let suppressedRemoveEvents = 0
   let unsubscribeCollabMessages: (() => void) | null = null
 
   function getOverlaySize() {
@@ -69,6 +91,19 @@ export function usePdfAnnotationOverlay({
       width,
       height,
     }
+  }
+
+  function getOverlayHeight() {
+    return getOverlaySize().height || 560
+  }
+
+  function syncBrushStyle() {
+    if (!fabricCanvas?.freeDrawingBrush) {
+      return
+    }
+
+    fabricCanvas.freeDrawingBrush.color = canvasDefaultStroke
+    fabricCanvas.freeDrawingBrush.width = Math.max(1.5, getOverlayHeight() * canvasDefaultStrokeWidth)
   }
 
   function syncOverlaySize() {
@@ -159,7 +194,19 @@ export function usePdfAnnotationOverlay({
     return page === currentPage.value
   }
 
+  function isTextboxObject(object: unknown): object is FabricTextboxWithId {
+    return !!object && typeof object === 'object' && (object as { type?: string }).type === 'textbox'
+  }
+
+  function isPathObject(object: unknown): object is FabricPathWithId {
+    return !!object && typeof object === 'object' && (object as { type?: string }).type === 'path'
+  }
+
   function createTextboxObject(annotation: PDFAnnotation, width: number, height: number) {
+    if (annotation.type !== 'TEXTBOX') {
+      return null
+    }
+
     const textbox = new Textbox(annotation.text, {
       left: annotation.positionX * width,
       top: annotation.positionY * height,
@@ -179,12 +226,87 @@ export function usePdfAnnotationOverlay({
     return textbox
   }
 
-  function hasFabricTextbox(annotationID: number) {
-    return renderedTextboxes.has(annotationID)
+  function scaleCanvasPath(path: CanvasPathCommand[], width: number, height: number) {
+    return path.map((command) => {
+      const scaled: CanvasPathCommand = [command[0]]
+      for (let index = 1; index < command.length; index += 1) {
+        const dimension = index % 2 === 1 ? width : height
+        scaled.push(command[index] * dimension)
+      }
+      return scaled
+    })
   }
 
-  function findFabricTextbox(annotationID: number) {
-    return renderedTextboxes.get(annotationID) ?? null
+  function normalizeCanvasPath(path: CanvasPathCommand[], width: number, height: number) {
+    return path.map((command) => {
+      const normalized: CanvasPathCommand = [command[0]]
+      for (let index = 1; index < command.length; index += 1) {
+        const dimension = index % 2 === 1 ? width : height
+        normalized.push(dimension ? command[index] / dimension : 0)
+      }
+      return normalized
+    })
+  }
+
+  function applyPathAppearance(path: FabricPathWithId, annotation?: PDFCanvasAnnotation) {
+    const strokeWidth = annotation?.strokeWidth ?? canvasDefaultStrokeWidth
+    const { height } = getOverlaySize()
+
+    path.set({
+      fill: null,
+      stroke: annotation?.stroke ?? path.stroke ?? canvasDefaultStroke,
+      strokeWidth: Math.max(1.5, strokeWidth * height),
+      borderColor: '#0f172a',
+      cornerColor: '#0f172a',
+      cornerStrokeColor: '#ffffff',
+      transparentCorners: false,
+      objectCaching: true,
+      hasControls: false,
+      lockScalingX: true,
+      lockScalingY: true,
+      lockRotation: true,
+    })
+  }
+
+  function createCanvasObject(annotation: PDFAnnotation, width: number, height: number) {
+    if (annotation.type !== 'CANVAS') {
+      return null
+    }
+
+    const path = new FabricPath(scaleCanvasPath(annotation.path, width, height), {
+      left: annotation.positionX * width,
+      top: annotation.positionY * height,
+    }) as FabricPathWithId
+
+    path.annotationId = annotation.id
+    applyPathAppearance(path, annotation)
+    path.setCoords()
+    return path
+  }
+
+  function syncObjectInteractivity(object: FabricAnnotationObject) {
+    const drawingMode = activeTool.value === 'draw'
+
+    if (isPathObject(object) && object.pendingCreate) {
+      object.set({
+        selectable: false,
+        evented: false,
+      })
+      return
+    }
+
+    object.set({
+      selectable: !drawingMode,
+      evented: !drawingMode,
+    })
+  }
+
+  function findFabricObject(annotationID: number) {
+    return renderedObjects.get(annotationID) ?? null
+  }
+
+  function hasFabricObject(annotationID: number) {
+    return renderedObjects.has(annotationID)
   }
 
   function findPendingTextbox() {
@@ -193,13 +315,62 @@ export function usePdfAnnotationOverlay({
     }
 
     for (const object of fabricCanvas.getObjects()) {
-      if (object.type !== 'textbox') {
+      if (!isTextboxObject(object) || !object.pendingCreate) {
         continue
       }
 
-      const textbox = object as FabricTextboxWithId
-      if (textbox.pendingCreate) {
-        return textbox
+      return object
+    }
+
+    return null
+  }
+
+  function areCanvasPathsEqual(a: CanvasPathCommand[], b: CanvasPathCommand[]) {
+    if (a.length !== b.length) {
+      return false
+    }
+
+    return a.every((command, index) => {
+      const other = b[index]
+      if (!other || command.length !== other.length) {
+        return false
+      }
+
+      return command.every((value, commandIndex) => {
+        const nextValue = other[commandIndex]
+        if (typeof value === 'string' || typeof nextValue === 'string') {
+          return value === nextValue
+        }
+
+        return Math.abs(value - nextValue) < 0.0001
+      })
+    })
+  }
+
+  function findPendingCanvasPath(annotation: PDFCanvasAnnotation) {
+    if (!fabricCanvas) {
+      return null
+    }
+
+    const { width, height } = getOverlaySize()
+    if (!width || !height) {
+      return null
+    }
+
+    for (const object of fabricCanvas.getObjects()) {
+      if (!isPathObject(object) || !object.pendingCreate) {
+        continue
+      }
+
+      const pending = serializeCanvasPath(object, width, height)
+      if (
+        areCanvasPathsEqual(pending.path, annotation.path)
+        && pending.stroke === annotation.stroke
+        && Math.abs(pending.strokeWidth - annotation.strokeWidth) < 0.0001
+        && Math.abs(pending.positionX - annotation.positionX) < 0.0001
+        && Math.abs(pending.positionY - annotation.positionY) < 0.0001
+      ) {
+        return object
       }
     }
 
@@ -215,6 +386,10 @@ export function usePdfAnnotationOverlay({
     annotation: PDFAnnotation,
     size: { width: number; height: number },
   ) {
+    if (annotation.type !== 'TEXTBOX') {
+      return false
+    }
+
     const { width, height } = size
     if (!width || !height) {
       return false
@@ -233,8 +408,51 @@ export function usePdfAnnotationOverlay({
       scaleX: 1,
       scaleY: 1,
     })
+    syncObjectInteractivity(textbox)
     textbox.setCoords()
     return true
+  }
+
+  function applyAnnotationToPath(path: FabricPathWithId, annotation: PDFCanvasAnnotation) {
+    path.annotationId = annotation.id
+    path.pendingCreate = false
+    applyPathAppearance(path, annotation)
+    syncObjectInteractivity(path)
+    path.setCoords()
+    return true
+  }
+
+  function createObjectForAnnotation(annotation: PDFAnnotation, width: number, height: number) {
+    const object = annotation.type === 'TEXTBOX'
+      ? createTextboxObject(annotation, width, height)
+      : createCanvasObject(annotation, width, height)
+
+    if (!object) {
+      return null
+    }
+
+    syncObjectInteractivity(object)
+    return object
+  }
+
+  function withSuppressedRemoveEvents(callback: () => void) {
+    suppressedRemoveEvents += 1
+    try {
+      callback()
+    } finally {
+      suppressedRemoveEvents -= 1
+    }
+  }
+
+  function removeObjectInternally(annotationID: number, object: FabricAnnotationObject) {
+    if (!fabricCanvas) {
+      return
+    }
+
+    withSuppressedRemoveEvents(() => {
+      renderedObjects.delete(annotationID)
+      fabricCanvas?.remove(object)
+    })
   }
 
   function syncRenderedAnnotations(page: number) {
@@ -246,23 +464,30 @@ export function usePdfAnnotationOverlay({
     const annotations = listPageAnnotations(page)
     const nextIDs = new Set(annotations.map((annotation) => annotation.id))
 
-    for (const [annotationID, textbox] of Array.from(renderedTextboxes.entries())) {
+    for (const [annotationID, object] of Array.from(renderedObjects.entries())) {
       if (!nextIDs.has(annotationID)) {
-        renderedTextboxes.delete(annotationID)
-        fabricCanvas.remove(textbox)
+        removeObjectInternally(annotationID, object)
       }
     }
 
     for (const annotation of annotations) {
-      const existingTextbox = renderedTextboxes.get(annotation.id)
-      if (existingTextbox) {
-        applyAnnotationToTextboxWithSize(existingTextbox, annotation, size)
+      const existingObject = renderedObjects.get(annotation.id)
+      if (existingObject && annotation.type === 'TEXTBOX' && isTextboxObject(existingObject)) {
+        applyAnnotationToTextboxWithSize(existingObject, annotation, size)
         continue
       }
 
-      const textbox = createTextboxObject(annotation, size.width, size.height)
-      renderedTextboxes.set(annotation.id, textbox)
-      fabricCanvas.add(textbox)
+      if (existingObject) {
+        removeObjectInternally(annotation.id, existingObject)
+      }
+
+      const object = createObjectForAnnotation(annotation, size.width, size.height)
+      if (!object) {
+        continue
+      }
+
+      renderedObjects.set(annotation.id, object)
+      fabricCanvas.add(object)
     }
 
     annotationCount.value = annotations.length
@@ -278,9 +503,53 @@ export function usePdfAnnotationOverlay({
       positionY: (textbox.top ?? 0) / height,
       width: ((textbox.width ?? 0) * (textbox.scaleX ?? 1)) / width,
       fontSize: (textbox.fontSize ?? 16) / height,
-      fill: typeof textbox.fill === 'string' ? textbox.fill : '#0f172a',
+      fill: typeof textbox.fill === 'string' ? textbox.fill : DEFAULT_TEXTBOX_FILL,
       angle: textbox.angle ?? 0,
     })
+  }
+
+  function serializeCanvasPath(path: FabricPathWithId, width: number, height: number) {
+    return createCanvasAnnotation({
+      id: path.annotationId ?? 0,
+      page: currentPage.value,
+      positionX: (path.left ?? 0) / width,
+      positionY: (path.top ?? 0) / height,
+      path: normalizeCanvasPath(path.path as CanvasPathCommand[], width, height),
+      stroke: typeof path.stroke === 'string' ? path.stroke : canvasDefaultStroke,
+      strokeWidth: (path.strokeWidth ?? 1.5) / height,
+    })
+  }
+
+  function syncStyleControls() {
+    if (!fabricCanvas) {
+      selectedAnnotationType.value = null
+      textboxFill.value = textboxDefaultFill
+      textboxFontSize.value = Math.max(12, getOverlayHeight() * textboxDefaultFontSize)
+      canvasStroke.value = canvasDefaultStroke
+      canvasStrokeWidth.value = Math.max(1.5, getOverlayHeight() * canvasDefaultStrokeWidth)
+      return
+    }
+
+    const activeObject = fabricCanvas.getActiveObject()
+    if (activeObject && isTextboxObject(activeObject)) {
+      selectedAnnotationType.value = 'TEXTBOX'
+      textboxFill.value = typeof activeObject.fill === 'string' ? activeObject.fill : textboxDefaultFill
+      textboxFontSize.value = Math.max(12, activeObject.fontSize ?? getOverlayHeight() * textboxDefaultFontSize)
+      return
+    }
+
+    if (activeObject && isPathObject(activeObject)) {
+      selectedAnnotationType.value = 'CANVAS'
+      canvasStroke.value = typeof activeObject.stroke === 'string' ? activeObject.stroke : canvasDefaultStroke
+      canvasStrokeWidth.value = Math.max(1.5, activeObject.strokeWidth ?? getOverlayHeight() * canvasDefaultStrokeWidth)
+      return
+    }
+
+    selectedAnnotationType.value = null
+    textboxFill.value = textboxDefaultFill
+    textboxFontSize.value = Math.max(12, getOverlayHeight() * textboxDefaultFontSize)
+    canvasStroke.value = canvasDefaultStroke
+    canvasStrokeWidth.value = Math.max(1.5, getOverlayHeight() * canvasDefaultStrokeWidth)
   }
 
   async function reloadAnnotations(page: number) {
@@ -319,25 +588,44 @@ export function usePdfAnnotationOverlay({
     activeTool.value = tool
     if (!fabricCanvas) return
 
-    fabricCanvas.selection = true
-    fabricCanvas.skipTargetFind = false
+    const drawingMode = tool === 'draw'
+    fabricCanvas.isDrawingMode = drawingMode
+    fabricCanvas.selection = !drawingMode
+    fabricCanvas.skipTargetFind = drawingMode
+
+    if (drawingMode) {
+      fabricCanvas.discardActiveObject()
+      selectedAnnotationId.value = null
+    }
+
+    for (const object of renderedObjects.values()) {
+      syncObjectInteractivity(object)
+    }
+
     fabricCanvas.requestRenderAll()
+    syncStyleControls()
   }
 
   function syncSelectionState() {
     if (!fabricCanvas) {
       selectedAnnotationId.value = null
+      selectedAnnotationType.value = null
+      syncStyleControls()
       return
     }
 
     const activeObject = fabricCanvas.getActiveObject()
-    if (!activeObject || activeObject.type !== 'textbox') {
+    if (!activeObject || (!isTextboxObject(activeObject) && !isPathObject(activeObject))) {
       selectedAnnotationId.value = null
+      selectedAnnotationType.value = null
+      syncStyleControls()
       return
     }
 
-    const annotationID = (activeObject as FabricTextboxWithId).annotationId
+    const annotationID = activeObject.annotationId
     selectedAnnotationId.value = typeof annotationID === 'number' ? annotationID : null
+    selectedAnnotationType.value = isTextboxObject(activeObject) ? 'TEXTBOX' : 'CANVAS'
+    syncStyleControls()
   }
 
   async function addTextbox() {
@@ -349,8 +637,8 @@ export function usePdfAnnotationOverlay({
       left: width * 0.16,
       top: height * 0.14,
       width: width * 0.3,
-      fontSize: Math.max(18, height * 0.032),
-      fill: '#111827',
+      fontSize: Math.max(12, height * textboxDefaultFontSize),
+      fill: textboxDefaultFill,
       editable: true,
       borderColor: '#0f172a',
       cornerColor: '#0f172a',
@@ -375,8 +663,8 @@ export function usePdfAnnotationOverlay({
       positionX: 0.16,
       positionY: 0.14,
       width: 0.3,
-      fontSize: 0.032,
-      fill: '#111827',
+      fontSize: textboxDefaultFontSize,
+      fill: textboxDefaultFill,
     })))
   }
 
@@ -399,13 +687,116 @@ export function usePdfAnnotationOverlay({
     updateAnnotation(toCollabAnnotation(annotation))
   }
 
+  function persistCanvasObject(object: FabricPathWithId, mode: 'update' | 'move' = 'update') {
+    if (!fabricCanvas || isHydrating || collabStatus.value !== 'connected') return
+    if (!object.annotationId || object.pendingCreate) return
+
+    const { width, height } = getOverlaySize()
+    if (!width || !height) return
+
+    const annotation = serializeCanvasPath(object, width, height)
+    upsertCachedAnnotation(annotation)
+    annotationCount.value = fabricCanvas.getObjects().length
+
+    if (mode === 'move') {
+      moveAnnotation(toCollabAnnotation(annotation))
+      return
+    }
+
+    updateAnnotation(toCollabAnnotation(annotation))
+  }
+
+  function setTextboxFill(fill: string) {
+    textboxDefaultFill = fill
+    textboxFill.value = fill
+
+    if (!fabricCanvas) {
+      return
+    }
+
+    const activeObject = fabricCanvas.getActiveObject()
+    if (!activeObject || !isTextboxObject(activeObject)) {
+      return
+    }
+
+    activeObject.set({ fill })
+    activeObject.setCoords()
+    fabricCanvas.requestRenderAll()
+    persistTextbox(activeObject)
+    syncStyleControls()
+  }
+
+  function setTextboxFontSize(fontSizePx: number) {
+    const nextFontSize = Math.max(12, fontSizePx)
+    textboxFontSize.value = nextFontSize
+    textboxDefaultFontSize = nextFontSize / getOverlayHeight()
+
+    if (!fabricCanvas) {
+      return
+    }
+
+    const activeObject = fabricCanvas.getActiveObject()
+    if (!activeObject || !isTextboxObject(activeObject)) {
+      return
+    }
+
+    activeObject.set({ fontSize: nextFontSize })
+    activeObject.setCoords()
+    fabricCanvas.requestRenderAll()
+    persistTextbox(activeObject)
+    syncStyleControls()
+  }
+
+  function setCanvasStroke(stroke: string) {
+    canvasDefaultStroke = stroke
+    canvasStroke.value = stroke
+    syncBrushStyle()
+
+    if (!fabricCanvas) {
+      return
+    }
+
+    const activeObject = fabricCanvas.getActiveObject()
+    if (!activeObject || !isPathObject(activeObject)) {
+      return
+    }
+
+    activeObject.set({ stroke })
+    activeObject.setCoords()
+    fabricCanvas.requestRenderAll()
+    persistCanvasObject(activeObject)
+    syncStyleControls()
+  }
+
+  function setCanvasStrokeWidth(strokeWidthPx: number) {
+    const nextStrokeWidth = Math.max(1.5, strokeWidthPx)
+    canvasStrokeWidth.value = nextStrokeWidth
+    canvasDefaultStrokeWidth = nextStrokeWidth / getOverlayHeight()
+    syncBrushStyle()
+
+    if (!fabricCanvas) {
+      return
+    }
+
+    const activeObject = fabricCanvas.getActiveObject()
+    if (!activeObject || !isPathObject(activeObject)) {
+      return
+    }
+
+    activeObject.set({ strokeWidth: nextStrokeWidth })
+    activeObject.setCoords()
+    fabricCanvas.requestRenderAll()
+    persistCanvasObject(activeObject)
+    syncStyleControls()
+  }
+
   function removeSelectedAnnotation() {
     if (!fabricCanvas) {
       return
     }
 
     const activeObject = fabricCanvas.getActiveObject()
-    if (!activeObject || activeObject.type !== 'textbox') {
+    if (!activeObject || (!isTextboxObject(activeObject) && !isPathObject(activeObject))) {
       return
     }
 
@@ -447,14 +838,28 @@ export function usePdfAnnotationOverlay({
 
         const previousPage = annotationPageIndex.get(annotation.id)
         upsertCachedAnnotation(annotation)
-        const pendingTextbox = message.type === 'annotation:created' ? findPendingTextbox() : null
-        if (pendingTextbox) {
-          applyAnnotationToTextbox(pendingTextbox, annotation)
-          fabricCanvas?.requestRenderAll()
-          void nextTick(() => {
-            persistTextbox(pendingTextbox)
-          })
-          return
+
+        if (message.type === 'annotation:created') {
+          if (annotation.type === 'TEXTBOX') {
+            const pendingTextbox = findPendingTextbox()
+            if (pendingTextbox) {
+              applyAnnotationToTextbox(pendingTextbox, annotation)
+              fabricCanvas?.requestRenderAll()
+              void nextTick(() => {
+                persistTextbox(pendingTextbox)
+              })
+              return
+            }
+          } else {
+            const pendingPath = findPendingCanvasPath(annotation)
+            if (pendingPath) {
+              applyAnnotationToPath(pendingPath, annotation)
+              renderedObjects.set(annotation.id, pendingPath)
+              annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
+              fabricCanvas?.requestRenderAll()
+              return
+            }
+          }
         }
 
         if (previousPage === currentPage.value && annotation.page !== currentPage.value) {
@@ -463,9 +868,9 @@ export function usePdfAnnotationOverlay({
         }
 
         if (annotation.page === currentPage.value) {
-          const textbox = findFabricTextbox(annotation.id)
-          if (textbox) {
-            const didApply = applyAnnotationToTextbox(textbox, annotation)
+          const object = findFabricObject(annotation.id)
+          if (object && annotation.type === 'TEXTBOX' && isTextboxObject(object)) {
+            const didApply = applyAnnotationToTextbox(object, annotation)
             if (didApply) {
               annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
               fabricCanvas?.requestRenderAll()
@@ -473,7 +878,7 @@ export function usePdfAnnotationOverlay({
             }
           }
 
-          if (!hasFabricTextbox(annotation.id)) {
+          if (!hasFabricObject(annotation.id) || annotation.type === 'CANVAS') {
             syncRenderedAnnotations(currentPage.value)
           }
         }
@@ -486,10 +891,9 @@ export function usePdfAnnotationOverlay({
         }
 
         if (removeCachedAnnotation(message.annotationId)) {
-          const existingTextbox = renderedTextboxes.get(message.annotationId)
-          if (existingTextbox && fabricCanvas) {
-            renderedTextboxes.delete(message.annotationId)
-            fabricCanvas.remove(existingTextbox)
+          const existingObject = renderedObjects.get(message.annotationId)
+          if (existingObject && fabricCanvas) {
+            removeObjectInternally(message.annotationId, existingObject)
             annotationCount.value = fabricCanvas.getObjects().length
             fabricCanvas.requestRenderAll()
           } else {
@@ -498,7 +902,9 @@ export function usePdfAnnotationOverlay({
         }
         if (selectedAnnotationId.value === message.annotationId) {
           selectedAnnotationId.value = null
+          selectedAnnotationType.value = null
         }
+        syncStyleControls()
       }
     }
   }
@@ -526,6 +932,11 @@ export function usePdfAnnotationOverlay({
       selection: true,
       containerClass: 'paperlink-annotation-overlay',
     })
+
+    const brush = new PencilBrush(fabricCanvas)
+    brush.color = DEFAULT_DRAW_COLOR
+    brush.width = Math.max(1.5, getOverlaySize().height * DEFAULT_DRAW_STROKE_WIDTH)
+    fabricCanvas.freeDrawingBrush = brush
 
     const wrapperEl = (fabricCanvas as unknown as { wrapperEl?: HTMLDivElement }).wrapperEl
     if (wrapperEl) {
@@ -555,38 +966,71 @@ export function usePdfAnnotationOverlay({
     }
 
     fabricCanvas.on('object:modified', (event) => {
-      if (!event.target || event.target.type !== 'textbox') return
-      const textbox = event.target as FabricTextboxWithId
-      const previous = typeof textbox.annotationId === 'number' ? getCachedAnnotation(textbox.annotationId) : null
-      const { width, height } = getOverlaySize()
-      if (!width || !height) return
+      if (!event.target) return
 
-      const next = serializeTextbox(textbox, width, height)
-      const isMoveOnly = previous !== null
-        && previous.text === next.text
-        && previous.width === next.width
-        && previous.fontSize === next.fontSize
-        && previous.fill === next.fill
-        && previous.angle === next.angle
-        && (previous.positionX !== next.positionX || previous.positionY !== next.positionY || previous.page !== next.page)
+      if (isTextboxObject(event.target)) {
+        const previous = typeof event.target.annotationId === 'number'
+          ? getCachedAnnotation(event.target.annotationId)
+          : null
+        const { width, height } = getOverlaySize()
+        if (!width || !height) return
 
-      persistTextbox(textbox, isMoveOnly ? 'move' : 'update')
-      syncSelectionState()
+        const next = serializeTextbox(event.target, width, height)
+        const isMoveOnly = previous !== null
+          && previous.type === 'TEXTBOX'
+          && previous.text === next.text
+          && previous.width === next.width
+          && previous.fontSize === next.fontSize
+          && previous.fill === next.fill
+          && previous.angle === next.angle
+          && (previous.positionX !== next.positionX || previous.positionY !== next.positionY || previous.page !== next.page)
+
+        persistTextbox(event.target, isMoveOnly ? 'move' : 'update')
+        syncSelectionState()
+        return
+      }
+
+      if (isPathObject(event.target)) {
+        persistCanvasObject(event.target, 'move')
+        syncSelectionState()
+      }
     })
     fabricCanvas.on('object:removed', (event) => {
-      if (isHydrating || !event.target || event.target.type !== 'textbox') return
-      const annotationID = (event.target as FabricTextboxWithId).annotationId
-      if (typeof annotationID !== 'number') return
+      if (isHydrating || suppressedRemoveEvents > 0 || !event.target || (!isTextboxObject(event.target) && !isPathObject(event.target))) return
+      const annotationID = event.target.annotationId
+      if (typeof annotationID !== 'number') {
+        annotationCount.value = fabricCanvas?.getObjects().length ?? 0
+        syncSelectionState()
+        return
+      }
 
       annotationCount.value = fabricCanvas?.getObjects().length ?? 0
-      renderedTextboxes.delete(annotationID)
+      renderedObjects.delete(annotationID)
       removeCachedAnnotation(annotationID)
       deleteAnnotation(annotationID)
       syncSelectionState()
     })
     fabricCanvas.on('text:changed', (event) => {
-      if (!event.target || event.target.type !== 'textbox') return
-      persistTextbox(event.target as FabricTextboxWithId)
+      if (!event.target || !isTextboxObject(event.target)) return
+      persistTextbox(event.target)
+    })
+    fabricCanvas.on('path:created', (event) => {
+      if (!event.path || !isPathObject(event.path) || collabStatus.value !== 'connected') {
+        return
+      }
+
+      const { width, height } = getOverlaySize()
+      if (!width || !height) {
+        return
+      }
+
+      event.path.pendingCreate = true
+      applyPathAppearance(event.path)
+      syncObjectInteractivity(event.path)
+      annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
+      fabricCanvas?.requestRenderAll()
+
+      createAnnotation(toCollabAnnotation(serializeCanvasPath(event.path, width, height)))
     })
     fabricCanvas.on('selection:created', syncSelectionState)
     fabricCanvas.on('selection:updated', syncSelectionState)
@@ -594,6 +1038,7 @@ export function usePdfAnnotationOverlay({
 
     overlayReady.value = true
     setActiveTool('select')
+    syncBrushStyle()
     syncOverlaySize()
     void reloadAnnotations(currentPage.value)
     requestCurrentPageAnnotations()
@@ -606,6 +1051,8 @@ export function usePdfAnnotationOverlay({
 
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
+        syncBrushStyle()
+        syncStyleControls()
         scheduleResizeSync()
       })
 
@@ -623,12 +1070,14 @@ export function usePdfAnnotationOverlay({
       resizeObserver.observe(canvas)
     }
     mountFabricCanvas()
+    syncStyleControls()
     scheduleResizeSync()
   })
 
   watch(currentPage, (page) => {
     void reloadAnnotations(page)
     requestPageAnnotations(page)
+    syncStyleControls()
   })
 
   watch(collabStatus, (status) => {
@@ -638,6 +1087,8 @@ export function usePdfAnnotationOverlay({
   })
 
   watch(pageRenderVersion, () => {
+    syncBrushStyle()
+    syncStyleControls()
     scheduleResizeSync()
   })
 
@@ -662,7 +1113,16 @@ export function usePdfAnnotationOverlay({
     activeTool,
     overlayReady,
     selectedAnnotationId,
+    selectedAnnotationType,
+    textboxFill,
+    textboxFontSize,
+    canvasStroke,
+    canvasStrokeWidth,
     setActiveTool,
+    setTextboxFill,
+    setTextboxFontSize,
+    setCanvasStroke,
+    setCanvasStrokeWidth,
     addTextbox,
     removeSelectedAnnotation,
   }
