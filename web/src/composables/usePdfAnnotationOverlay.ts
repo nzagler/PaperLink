@@ -12,19 +12,22 @@ import {
   type PDFAnnotation,
   type PDFCanvasAnnotation,
 } from '@/lib/pdf_annotations'
-import type { CollabServerMessage, CollabStatus } from '@/lib/pdf_collab'
+import type { CollabAnnotationLock, CollabServerMessage, CollabStatus } from '@/lib/pdf_collab'
 
 type OverlayOptions = {
   currentPage: Ref<number>
   pdfCanvasEl: Ref<HTMLCanvasElement | null>
   pageRenderVersion: Ref<number>
   collabStatus: Ref<CollabStatus>
+  collabClientId: Ref<string | null>
   subscribeCollabMessages: (listener: (message: CollabServerMessage) => void) => () => void
   requestPageAnnotations: (page: number) => boolean
   createAnnotation: (annotation: ReturnType<typeof toCollabAnnotation>) => boolean
   updateAnnotation: (annotation: ReturnType<typeof toCollabAnnotation>) => boolean
   moveAnnotation: (annotation: ReturnType<typeof toCollabAnnotation>) => boolean
   deleteAnnotation: (annotationId: number) => boolean
+  lockAnnotation: (annotationId: number) => boolean
+  unlockAnnotation: (annotationId: number) => boolean
 }
 
 type FabricAnnotationMeta = {
@@ -35,6 +38,11 @@ type FabricAnnotationMeta = {
 type FabricTextboxWithId = Textbox & FabricAnnotationMeta
 type FabricPathWithId = FabricPath & FabricAnnotationMeta
 type FabricAnnotationObject = FabricTextboxWithId | FabricPathWithId
+type LockedAnnotationSummary = {
+  annotationId: number
+  username: string
+  isMine: boolean
+}
 
 const DEFAULT_TEXTBOX_FILL = '#111827'
 const DEFAULT_TEXTBOX_FONT_SIZE = 0.032
@@ -46,12 +54,15 @@ export function usePdfAnnotationOverlay({
   pdfCanvasEl,
   pageRenderVersion,
   collabStatus,
+  collabClientId,
   subscribeCollabMessages,
   requestPageAnnotations,
   createAnnotation,
   updateAnnotation,
   moveAnnotation,
   deleteAnnotation,
+  lockAnnotation,
+  unlockAnnotation,
 }: OverlayOptions) {
   const annotationHostEl = ref<HTMLDivElement | null>(null)
   const activeTool = ref<AnnotationTool>('select')
@@ -63,20 +74,25 @@ export function usePdfAnnotationOverlay({
   const textboxFontSize = ref(18)
   const canvasStroke = ref(DEFAULT_DRAW_COLOR)
   const canvasStrokeWidth = ref(2)
+  const lockedAnnotations = ref<LockedAnnotationSummary[]>([])
 
   const annotationsByPage = new Map<number, Map<number, PDFAnnotation>>()
   const annotationPageIndex = new Map<number, number>()
+  const annotationLocks = new Map<number, CollabAnnotationLock>()
   const renderedObjects = new Map<number, FabricAnnotationObject>()
   let textboxDefaultFill = DEFAULT_TEXTBOX_FILL
   let textboxDefaultFontSize = DEFAULT_TEXTBOX_FONT_SIZE
   let canvasDefaultStroke = DEFAULT_DRAW_COLOR
   let canvasDefaultStrokeWidth = DEFAULT_DRAW_STROKE_WIDTH
   let fabricCanvas: FabricCanvas | null = null
+  let lockLayerEl: HTMLDivElement | null = null
   let resizeObserver: ResizeObserver | null = null
   let loadToken = 0
   let isHydrating = false
   let resizeFrame = 0
   let suppressedRemoveEvents = 0
+  let suppressedSelectionLockSync = 0
+  let activeSelectionLockId: number | null = null
   let unsubscribeCollabMessages: (() => void) | null = null
 
   function getOverlaySize() {
@@ -116,6 +132,10 @@ export function usePdfAnnotationOverlay({
       annotationHostEl.value.style.width = `${width}px`
       annotationHostEl.value.style.height = `${height}px`
     }
+    if (lockLayerEl) {
+      lockLayerEl.style.width = `${width}px`
+      lockLayerEl.style.height = `${height}px`
+    }
 
     fabricCanvas.setDimensions({ width, height })
     fabricCanvas.requestRenderAll()
@@ -148,6 +168,87 @@ export function usePdfAnnotationOverlay({
     return Array.from(pageMap.values()).sort((a, b) => a.id - b.id)
   }
 
+  function isOwnLock(lock: CollabAnnotationLock | null | undefined) {
+    return !!lock && !!collabClientId.value && lock.ownerClientId === collabClientId.value
+  }
+
+  function getAnnotationLock(annotationId: number) {
+    return annotationLocks.get(annotationId) ?? null
+  }
+
+  function isAnnotationLockedByOther(annotationId: number) {
+    const lock = getAnnotationLock(annotationId)
+    return !!lock && !isOwnLock(lock)
+  }
+
+  function syncLockedAnnotationSummary() {
+    const page = currentPage.value
+    const nextLockedAnnotations = Array.from(annotationLocks.values())
+      .filter((lock) => annotationPageIndex.get(lock.annotationId) === page)
+      .sort((a, b) => a.annotationId - b.annotationId)
+      .map((lock) => ({
+        annotationId: lock.annotationId,
+        username: lock.user.username,
+        isMine: isOwnLock(lock),
+      }))
+
+    lockedAnnotations.value = nextLockedAnnotations
+  }
+
+  function createLockOverlay(lock: CollabAnnotationLock, object: FabricAnnotationObject) {
+    const overlay = document.createElement('div')
+    const badge = document.createElement('div')
+    const mine = isOwnLock(lock)
+    const bounds = object.getBoundingRect()
+    const width = Math.max(18, Math.round(bounds.width))
+    const height = Math.max(18, Math.round(bounds.height))
+    const top = Math.max(0, Math.round(bounds.top))
+    const left = Math.max(0, Math.round(bounds.left))
+    const badgeTop = top > 26 ? top - 24 : top + 4
+
+    overlay.className = mine
+      ? 'pointer-events-none absolute rounded-md border border-emerald-500/90 bg-emerald-500/8 shadow-[0_0_0_1px_rgba(16,185,129,0.16)]'
+      : 'pointer-events-none absolute rounded-md border border-amber-500/90 bg-amber-500/10 shadow-[0_0_0_1px_rgba(245,158,11,0.16)]'
+    overlay.style.left = `${left}px`
+    overlay.style.top = `${top}px`
+    overlay.style.width = `${width}px`
+    overlay.style.height = `${height}px`
+
+    badge.className = mine
+      ? 'pointer-events-none absolute max-w-[12rem] truncate rounded-full bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm'
+      : 'pointer-events-none absolute max-w-[12rem] truncate rounded-full bg-amber-500 px-2 py-1 text-[10px] font-semibold text-neutral-950 shadow-sm'
+    badge.style.left = `${left}px`
+    badge.style.top = `${badgeTop}px`
+    badge.textContent = mine ? `${lock.user.username} (You)` : lock.user.username
+
+    return [overlay, badge]
+  }
+
+  function syncLockOverlays() {
+    if (!lockLayerEl) {
+      syncLockedAnnotationSummary()
+      return
+    }
+
+    lockLayerEl.replaceChildren()
+    syncLockedAnnotationSummary()
+
+    const pageLocks = lockedAnnotations.value
+      .map((summary) => getAnnotationLock(summary.annotationId))
+      .filter((lock): lock is CollabAnnotationLock => lock !== null)
+
+    for (const lock of pageLocks) {
+      const object = renderedObjects.get(lock.annotationId)
+      if (!object) {
+        continue
+      }
+
+      object.setCoords()
+      const [overlay, badge] = createLockOverlay(lock, object)
+      lockLayerEl.append(overlay, badge)
+    }
+  }
+
   function replacePageAnnotations(page: number, annotations: PDFAnnotation[]) {
     const existingPageMap = annotationsByPage.get(page)
     if (existingPageMap) {
@@ -163,6 +264,7 @@ export function usePdfAnnotationOverlay({
     }
 
     annotationsByPage.set(page, nextPageMap)
+    syncLockedAnnotationSummary()
   }
 
   function upsertCachedAnnotation(annotation: PDFAnnotation) {
@@ -177,11 +279,14 @@ export function usePdfAnnotationOverlay({
 
     getPageAnnotationMap(annotation.page).set(annotation.id, cloneAnnotation(annotation))
     annotationPageIndex.set(annotation.id, annotation.page)
+    syncLockedAnnotationSummary()
   }
 
   function removeCachedAnnotation(annotationID: number) {
     const page = annotationPageIndex.get(annotationID)
     if (page === undefined) {
+      annotationLocks.delete(annotationID)
+      syncLockedAnnotationSummary()
       return false
     }
 
@@ -191,6 +296,8 @@ export function usePdfAnnotationOverlay({
       annotationsByPage.delete(page)
     }
     annotationPageIndex.delete(annotationID)
+    annotationLocks.delete(annotationID)
+    syncLockedAnnotationSummary()
     return page === currentPage.value
   }
 
@@ -286,6 +393,8 @@ export function usePdfAnnotationOverlay({
 
   function syncObjectInteractivity(object: FabricAnnotationObject) {
     const drawingMode = activeTool.value === 'draw'
+    const annotationId = object.annotationId
+    const lockedByOther = typeof annotationId === 'number' && isAnnotationLockedByOther(annotationId)
 
     if (isPathObject(object) && object.pendingCreate) {
       object.set({
@@ -296,9 +405,15 @@ export function usePdfAnnotationOverlay({
     }
 
     object.set({
-      selectable: !drawingMode,
-      evented: !drawingMode,
+      selectable: !drawingMode && !lockedByOther,
+      evented: !drawingMode && !lockedByOther,
     })
+
+    if (isTextboxObject(object)) {
+      object.set({
+        editable: !lockedByOther,
+      })
+    }
   }
 
   function findFabricObject(annotationID: number) {
@@ -491,6 +606,7 @@ export function usePdfAnnotationOverlay({
     }
 
     annotationCount.value = annotations.length
+    syncLockOverlays()
     fabricCanvas.requestRenderAll()
   }
 
@@ -584,6 +700,59 @@ export function usePdfAnnotationOverlay({
     requestPageAnnotations(currentPage.value)
   }
 
+  function withSuppressedSelectionLockSync(callback: () => void) {
+    suppressedSelectionLockSync += 1
+    try {
+      callback()
+    } finally {
+      suppressedSelectionLockSync -= 1
+    }
+  }
+
+  function releaseSelectionLock(annotationId: number | null = activeSelectionLockId) {
+    if (annotationId === null) {
+      return
+    }
+    unlockAnnotation(annotationId)
+    if (activeSelectionLockId === annotationId) {
+      activeSelectionLockId = null
+    }
+  }
+
+  function syncSelectionLock(nextAnnotationId: number | null, activeObject: FabricAnnotationObject | null = null) {
+    if (suppressedSelectionLockSync > 0) {
+      return
+    }
+
+    if (activeSelectionLockId !== null && activeSelectionLockId !== nextAnnotationId) {
+      releaseSelectionLock(activeSelectionLockId)
+    }
+
+    if (nextAnnotationId === null) {
+      return
+    }
+
+    const lock = getAnnotationLock(nextAnnotationId)
+    if (lock && !isOwnLock(lock)) {
+      if (fabricCanvas && activeObject) {
+        withSuppressedSelectionLockSync(() => {
+          fabricCanvas?.discardActiveObject()
+        })
+        fabricCanvas.requestRenderAll()
+      }
+      return
+    }
+
+    if (activeSelectionLockId === nextAnnotationId || isOwnLock(lock)) {
+      activeSelectionLockId = nextAnnotationId
+      return
+    }
+
+    if (lockAnnotation(nextAnnotationId)) {
+      activeSelectionLockId = nextAnnotationId
+    }
+  }
+
   function setActiveTool(tool: AnnotationTool) {
     activeTool.value = tool
     if (!fabricCanvas) return
@@ -608,6 +777,7 @@ export function usePdfAnnotationOverlay({
 
   function syncSelectionState() {
     if (!fabricCanvas) {
+      syncSelectionLock(null)
       selectedAnnotationId.value = null
       selectedAnnotationType.value = null
       syncStyleControls()
@@ -616,6 +786,7 @@ export function usePdfAnnotationOverlay({
 
     const activeObject = fabricCanvas.getActiveObject()
     if (!activeObject || (!isTextboxObject(activeObject) && !isPathObject(activeObject))) {
+      syncSelectionLock(null)
       selectedAnnotationId.value = null
       selectedAnnotationType.value = null
       syncStyleControls()
@@ -623,6 +794,14 @@ export function usePdfAnnotationOverlay({
     }
 
     const annotationID = activeObject.annotationId
+    const nextAnnotationId = typeof annotationID === 'number' ? annotationID : null
+    syncSelectionLock(nextAnnotationId, activeObject)
+    if (nextAnnotationId !== null && isAnnotationLockedByOther(nextAnnotationId)) {
+      selectedAnnotationId.value = null
+      selectedAnnotationType.value = null
+      syncStyleControls()
+      return
+    }
     selectedAnnotationId.value = typeof annotationID === 'number' ? annotationID : null
     selectedAnnotationType.value = isTextboxObject(activeObject) ? 'TEXTBOX' : 'CANVAS'
     syncStyleControls()
@@ -678,6 +857,7 @@ export function usePdfAnnotationOverlay({
     const annotation = serializeTextbox(object, width, height)
     upsertCachedAnnotation(annotation)
     annotationCount.value = fabricCanvas.getObjects().length
+    syncLockOverlays()
 
     if (mode === 'move') {
       moveAnnotation(toCollabAnnotation(annotation))
@@ -697,6 +877,7 @@ export function usePdfAnnotationOverlay({
     const annotation = serializeCanvasPath(object, width, height)
     upsertCachedAnnotation(annotation)
     annotationCount.value = fabricCanvas.getObjects().length
+    syncLockOverlays()
 
     if (mode === 'move') {
       moveAnnotation(toCollabAnnotation(annotation))
@@ -800,14 +981,44 @@ export function usePdfAnnotationOverlay({
       return
     }
 
-    fabricCanvas.remove(activeObject)
-    fabricCanvas.discardActiveObject()
+    const annotationId = activeObject.annotationId
+    if (typeof annotationId !== 'number') {
+      return
+    }
+
+    withSuppressedSelectionLockSync(() => {
+      withSuppressedRemoveEvents(() => {
+        fabricCanvas?.remove(activeObject)
+        fabricCanvas?.discardActiveObject()
+      })
+    })
+    renderedObjects.delete(annotationId)
+    removeCachedAnnotation(annotationId)
     selectedAnnotationId.value = null
+    selectedAnnotationType.value = null
+    if (activeSelectionLockId === annotationId) {
+      activeSelectionLockId = null
+    }
+    annotationCount.value = fabricCanvas.getObjects().length
     fabricCanvas.requestRenderAll()
+    syncLockOverlays()
+    deleteAnnotation(annotationId)
+    syncStyleControls()
   }
 
   function handleServerMessage(message: CollabServerMessage) {
     switch (message.type) {
+      case 'room_state': {
+        annotationLocks.clear()
+        if (Array.isArray(message.annotationLocks)) {
+          for (const lock of message.annotationLocks) {
+            annotationLocks.set(lock.annotationId, lock)
+          }
+        }
+        syncRenderedAnnotations(currentPage.value)
+        return
+      }
+
       case 'annotations:page': {
         if (typeof message.page !== 'number' || !Array.isArray(message.annotations)) {
           return
@@ -821,6 +1032,52 @@ export function usePdfAnnotationOverlay({
         if (message.page === currentPage.value) {
           syncRenderedAnnotations(message.page)
         }
+        return
+      }
+
+      case 'annotation:locked': {
+        if (!message.annotationLock) {
+          return
+        }
+
+        annotationLocks.set(message.annotationLock.annotationId, message.annotationLock)
+        const object = renderedObjects.get(message.annotationLock.annotationId)
+        if (object) {
+          syncObjectInteractivity(object)
+        }
+
+        if (!isOwnLock(message.annotationLock) && selectedAnnotationId.value === message.annotationLock.annotationId && fabricCanvas) {
+          withSuppressedSelectionLockSync(() => {
+            fabricCanvas.discardActiveObject()
+          })
+          selectedAnnotationId.value = null
+          selectedAnnotationType.value = null
+        }
+
+        syncLockOverlays()
+        fabricCanvas?.requestRenderAll()
+        syncStyleControls()
+        return
+      }
+
+      case 'annotation:unlocked': {
+        if (!message.annotationLock) {
+          return
+        }
+
+        annotationLocks.delete(message.annotationLock.annotationId)
+        if (activeSelectionLockId === message.annotationLock.annotationId && message.annotationLock.ownerClientId === collabClientId.value) {
+          activeSelectionLockId = null
+        }
+
+        const object = renderedObjects.get(message.annotationLock.annotationId)
+        if (object) {
+          syncObjectInteractivity(object)
+        }
+
+        syncLockOverlays()
+        fabricCanvas?.requestRenderAll()
+        syncStyleControls()
         return
       }
 
@@ -845,6 +1102,8 @@ export function usePdfAnnotationOverlay({
             if (pendingTextbox) {
               applyAnnotationToTextbox(pendingTextbox, annotation)
               fabricCanvas?.requestRenderAll()
+              syncLockOverlays()
+              syncSelectionState()
               void nextTick(() => {
                 persistTextbox(pendingTextbox)
               })
@@ -857,6 +1116,7 @@ export function usePdfAnnotationOverlay({
               renderedObjects.set(annotation.id, pendingPath)
               annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
               fabricCanvas?.requestRenderAll()
+              syncLockOverlays()
               return
             }
           }
@@ -873,6 +1133,7 @@ export function usePdfAnnotationOverlay({
             const didApply = applyAnnotationToTextbox(object, annotation)
             if (didApply) {
               annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
+              syncLockOverlays()
               fabricCanvas?.requestRenderAll()
               return
             }
@@ -900,11 +1161,34 @@ export function usePdfAnnotationOverlay({
             syncRenderedAnnotations(currentPage.value)
           }
         }
+        if (activeSelectionLockId === message.annotationId) {
+          activeSelectionLockId = null
+        }
         if (selectedAnnotationId.value === message.annotationId) {
           selectedAnnotationId.value = null
           selectedAnnotationType.value = null
         }
+        syncLockOverlays()
         syncStyleControls()
+        return
+      }
+
+      case 'error': {
+        if (
+          typeof message.annotationId === 'number'
+          && activeSelectionLockId === message.annotationId
+          && typeof message.error === 'string'
+          && message.error.includes('locked')
+          && fabricCanvas
+        ) {
+          activeSelectionLockId = null
+          withSuppressedSelectionLockSync(() => {
+            fabricCanvas.discardActiveObject()
+          })
+          selectedAnnotationId.value = null
+          selectedAnnotationType.value = null
+          syncStyleControls()
+        }
       }
     }
   }
@@ -924,7 +1208,9 @@ export function usePdfAnnotationOverlay({
 
     const canvasEl = document.createElement('canvas')
     canvasEl.className = 'block h-full w-full'
-    host.replaceChildren(canvasEl)
+    lockLayerEl = document.createElement('div')
+    lockLayerEl.className = 'pointer-events-none absolute inset-0 z-30'
+    host.replaceChildren(canvasEl, lockLayerEl)
 
     fabricCanvas = new FabricCanvas(canvasEl, {
       preserveObjectStacking: true,
@@ -1042,6 +1328,7 @@ export function usePdfAnnotationOverlay({
     syncOverlaySize()
     void reloadAnnotations(currentPage.value)
     requestCurrentPageAnnotations()
+    syncLockOverlays()
   }
 
   onMounted(async () => {
@@ -1075,6 +1362,16 @@ export function usePdfAnnotationOverlay({
   })
 
   watch(currentPage, (page) => {
+    if (activeSelectionLockId !== null) {
+      releaseSelectionLock(activeSelectionLockId)
+    }
+    if (fabricCanvas) {
+      withSuppressedSelectionLockSync(() => {
+        fabricCanvas?.discardActiveObject()
+      })
+    }
+    selectedAnnotationId.value = null
+    selectedAnnotationType.value = null
     void reloadAnnotations(page)
     requestPageAnnotations(page)
     syncStyleControls()
@@ -1083,6 +1380,17 @@ export function usePdfAnnotationOverlay({
   watch(collabStatus, (status) => {
     if (status === 'connected') {
       requestCurrentPageAnnotations()
+      return
+    }
+
+    activeSelectionLockId = null
+    annotationLocks.clear()
+    syncLockOverlays()
+    if (fabricCanvas) {
+      for (const object of renderedObjects.values()) {
+        syncObjectInteractivity(object)
+      }
+      fabricCanvas.requestRenderAll()
     }
   })
 
@@ -1099,6 +1407,8 @@ export function usePdfAnnotationOverlay({
     unsubscribeCollabMessages?.()
     unsubscribeCollabMessages = null
     overlayReady.value = false
+    releaseSelectionLock(activeSelectionLockId)
+    lockLayerEl = null
 
     if (fabricCanvas) {
       fabricCanvas.dispose()
@@ -1112,6 +1422,7 @@ export function usePdfAnnotationOverlay({
     annotationTools,
     activeTool,
     overlayReady,
+    lockedAnnotations,
     selectedAnnotationId,
     selectedAnnotationType,
     textboxFill,

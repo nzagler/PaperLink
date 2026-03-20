@@ -10,6 +10,7 @@ import (
 )
 
 type client struct {
+	id   string
 	conn *websocket.Conn
 	room *room
 	user User
@@ -29,16 +30,24 @@ func newRoom(documentID string) *room {
 	}
 }
 
-func (r *room) handleConnection(s *Service, ws *websocket.Conn, user User) error {
-	client, users := r.join(ws, user)
+func (r *room) handleConnection(s *Service, ws *websocket.Conn, clientID string, user User) error {
+	client, users := r.join(ws, clientID, user)
 	defer r.disconnect(s, client)
 
 	go client.writePump()
 
+	locks, err := s.annotations.GetDocumentLocks(r.documentID)
+	if err != nil {
+		return err
+	}
+
 	client.queue(outboundMessage{
-		Type:       "room_state",
-		DocumentID: r.documentID,
-		Users:      users,
+		Type:            "room_state",
+		DocumentID:      r.documentID,
+		ClientID:        client.id,
+		User:            &user,
+		Users:           users,
+		AnnotationLocks: locks,
 	})
 
 	r.broadcast(outboundMessage{
@@ -65,11 +74,12 @@ func (r *room) handleConnection(s *Service, ws *websocket.Conn, user User) error
 	}
 }
 
-func (r *room) join(ws *websocket.Conn, user User) (*client, []User) {
+func (r *room) join(ws *websocket.Conn, clientID string, user User) (*client, []User) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	currentClient := &client{
+		id:   clientID,
 		conn: ws,
 		room: r,
 		user: user,
@@ -86,6 +96,16 @@ func (r *room) join(ws *websocket.Conn, user User) (*client, []User) {
 }
 
 func (r *room) disconnect(s *Service, currentClient *client) {
+	releasedLocks := s.annotations.ReleaseLocksByOwner(r.documentID, currentClient.id)
+	for index := range releasedLocks {
+		lock := releasedLocks[index]
+		r.broadcast(outboundMessage{
+			Type:           "annotation:unlocked",
+			DocumentID:     r.documentID,
+			AnnotationLock: &lock,
+		}, currentClient)
+	}
+
 	if !r.leave(currentClient) {
 		return
 	}

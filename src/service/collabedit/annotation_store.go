@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,8 +16,11 @@ import (
 )
 
 var (
-	ErrAnnotationNotFound = errors.New("annotation not found")
-	ErrInvalidAnnotation  = errors.New("invalid annotation")
+	ErrAnnotationNotFound     = errors.New("annotation not found")
+	ErrInvalidAnnotation      = errors.New("invalid annotation")
+	ErrAnnotationLocked       = errors.New("annotation locked by another user")
+	ErrAnnotationLockRequired = errors.New("annotation lock required")
+	ErrAnnotationLockOwned    = errors.New("annotation lock owned by another client")
 )
 
 type annotationMessage struct {
@@ -35,16 +39,24 @@ type annotationActionPayload struct {
 	Current  *annotationMessage `json:"current,omitempty"`
 }
 
+type annotationLockState struct {
+	AnnotationID  int
+	User          User
+	OwnerClientID string
+	LockedAt      time.Time
+}
+
 type documentAnnotationState struct {
-	DocumentID     int
-	DocumentUUID   string
-	Annotations    map[int]*entity.Annotation
-	DeletedIDs     map[int]struct{}
-	PendingActions []entity.AnnotationAction
-	Dirty          bool
-	RoomActive     bool
-	LastTouchedAt  time.Time
-	LastRoomLeftAt time.Time
+	DocumentID      int
+	DocumentUUID    string
+	Annotations     map[int]*entity.Annotation
+	AnnotationLocks map[int]*annotationLockState
+	DeletedIDs      map[int]struct{}
+	PendingActions  []entity.AnnotationAction
+	Dirty           bool
+	RoomActive      bool
+	LastTouchedAt   time.Time
+	LastRoomLeftAt  time.Time
 }
 
 type AnnotationStore struct {
@@ -87,13 +99,14 @@ func (s *AnnotationStore) EnsureDocumentLoaded(documentUUID string) error {
 	}
 
 	state := &documentAnnotationState{
-		DocumentID:     doc.ID,
-		DocumentUUID:   documentUUID,
-		Annotations:    make(map[int]*entity.Annotation, len(annotations)),
-		DeletedIDs:     make(map[int]struct{}),
-		PendingActions: make([]entity.AnnotationAction, 0),
-		Dirty:          false,
-		LastTouchedAt:  time.Now(),
+		DocumentID:      doc.ID,
+		DocumentUUID:    documentUUID,
+		Annotations:     make(map[int]*entity.Annotation, len(annotations)),
+		AnnotationLocks: make(map[int]*annotationLockState),
+		DeletedIDs:      make(map[int]struct{}),
+		PendingActions:  make([]entity.AnnotationAction, 0),
+		Dirty:           false,
+		LastTouchedAt:   time.Now(),
 	}
 
 	for _, annotation := range annotations {
@@ -171,6 +184,19 @@ func (s *AnnotationStore) GetPageAnnotations(documentUUID string, page int64) ([
 	return result, nil
 }
 
+func (s *AnnotationStore) GetDocumentLocks(documentUUID string) ([]annotationLockMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := s.documents[documentUUID]
+	if state == nil {
+		return nil, ErrDocumentNotFound
+	}
+
+	state.LastTouchedAt = time.Now()
+	return listAnnotationLocks(state), nil
+}
+
 func (s *AnnotationStore) CreateAnnotation(documentUUID string, input annotationMessage) (*annotationMessage, error) {
 	if err := validateAnnotationInput(input, true); err != nil {
 		return nil, err
@@ -212,7 +238,7 @@ func (s *AnnotationStore) CreateAnnotation(documentUUID string, input annotation
 	return &result, nil
 }
 
-func (s *AnnotationStore) UpdateAnnotation(documentUUID string, input annotationMessage) (*annotationMessage, error) {
+func (s *AnnotationStore) UpdateAnnotation(documentUUID, ownerClientID string, input annotationMessage) (*annotationMessage, error) {
 	if input.ID == 0 {
 		return nil, ErrInvalidAnnotation
 	}
@@ -232,6 +258,9 @@ func (s *AnnotationStore) UpdateAnnotation(documentUUID string, input annotation
 	if annotation == nil {
 		return nil, ErrAnnotationNotFound
 	}
+	if err := ensureAnnotationLockHeldLocked(state, input.ID, ownerClientID); err != nil {
+		return nil, err
+	}
 
 	previous := cloneAnnotation(annotation)
 	annotation.Type = input.Type
@@ -249,7 +278,7 @@ func (s *AnnotationStore) UpdateAnnotation(documentUUID string, input annotation
 	return &result, nil
 }
 
-func (s *AnnotationStore) MoveAnnotation(documentUUID string, input annotationMessage) (*annotationMessage, error) {
+func (s *AnnotationStore) MoveAnnotation(documentUUID, ownerClientID string, input annotationMessage) (*annotationMessage, error) {
 	if input.ID == 0 || input.Page <= 0 {
 		return nil, ErrInvalidAnnotation
 	}
@@ -266,6 +295,9 @@ func (s *AnnotationStore) MoveAnnotation(documentUUID string, input annotationMe
 	if annotation == nil {
 		return nil, ErrAnnotationNotFound
 	}
+	if err := ensureAnnotationLockHeldLocked(state, input.ID, ownerClientID); err != nil {
+		return nil, err
+	}
 
 	previous := cloneAnnotation(annotation)
 	annotation.Page = input.Page
@@ -281,7 +313,7 @@ func (s *AnnotationStore) MoveAnnotation(documentUUID string, input annotationMe
 	return &result, nil
 }
 
-func (s *AnnotationStore) DeleteAnnotation(documentUUID string, annotationID int) error {
+func (s *AnnotationStore) DeleteAnnotation(documentUUID, ownerClientID string, annotationID int) error {
 	if annotationID == 0 {
 		return ErrInvalidAnnotation
 	}
@@ -298,15 +330,118 @@ func (s *AnnotationStore) DeleteAnnotation(documentUUID string, annotationID int
 	if annotation == nil {
 		return ErrAnnotationNotFound
 	}
+	if err := ensureAnnotationLockHeldLocked(state, annotationID, ownerClientID); err != nil {
+		return err
+	}
 
 	previous := cloneAnnotation(annotation)
 	delete(state.Annotations, annotationID)
+	delete(state.AnnotationLocks, annotationID)
 	state.DeletedIDs[annotationID] = struct{}{}
 	state.Dirty = true
 	state.LastTouchedAt = time.Now()
 	s.recordActionLocked(state, entity.Delete, previous, nil)
 
 	return nil
+}
+
+func (s *AnnotationStore) AcquireAnnotationLock(documentUUID string, annotationID int, ownerClientID string, user User) (*annotationLockMessage, error) {
+	if annotationID == 0 {
+		return nil, ErrInvalidAnnotation
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := s.documents[documentUUID]
+	if state == nil {
+		return nil, ErrDocumentNotFound
+	}
+
+	if state.Annotations[annotationID] == nil {
+		return nil, ErrAnnotationNotFound
+	}
+
+	if existing := state.AnnotationLocks[annotationID]; existing != nil {
+		state.LastTouchedAt = time.Now()
+		if existing.OwnerClientID != ownerClientID {
+			return nil, ErrAnnotationLocked
+		}
+
+		existing.LockedAt = time.Now()
+		lock := toAnnotationLockMessage(existing)
+		return &lock, nil
+	}
+
+	lock := &annotationLockState{
+		AnnotationID:  annotationID,
+		User:          user,
+		OwnerClientID: ownerClientID,
+		LockedAt:      time.Now(),
+	}
+	state.AnnotationLocks[annotationID] = lock
+	state.LastTouchedAt = time.Now()
+
+	result := toAnnotationLockMessage(lock)
+	return &result, nil
+}
+
+func (s *AnnotationStore) ReleaseAnnotationLock(documentUUID string, annotationID int, ownerClientID string) (*annotationLockMessage, error) {
+	if annotationID == 0 {
+		return nil, ErrInvalidAnnotation
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := s.documents[documentUUID]
+	if state == nil {
+		return nil, ErrDocumentNotFound
+	}
+
+	lock := state.AnnotationLocks[annotationID]
+	if lock == nil {
+		state.LastTouchedAt = time.Now()
+		return nil, nil
+	}
+	if lock.OwnerClientID != ownerClientID {
+		return nil, ErrAnnotationLockOwned
+	}
+
+	delete(state.AnnotationLocks, annotationID)
+	state.LastTouchedAt = time.Now()
+
+	result := toAnnotationLockMessage(lock)
+	return &result, nil
+}
+
+func (s *AnnotationStore) ReleaseLocksByOwner(documentUUID, ownerClientID string) []annotationLockMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state := s.documents[documentUUID]
+	if state == nil {
+		return nil
+	}
+
+	released := make([]annotationLockMessage, 0)
+	for annotationID, lock := range state.AnnotationLocks {
+		if lock.OwnerClientID != ownerClientID {
+			continue
+		}
+
+		released = append(released, toAnnotationLockMessage(lock))
+		delete(state.AnnotationLocks, annotationID)
+	}
+
+	if len(released) > 0 {
+		state.LastTouchedAt = time.Now()
+		slices.SortFunc(released, func(a, b annotationLockMessage) int {
+			return a.AnnotationID - b.AnnotationID
+		})
+	}
+
+	return released
 }
 
 func (s *AnnotationStore) FlushDocument(documentUUID string) error {
@@ -437,6 +572,17 @@ func validateAnnotationInput(input annotationMessage, isCreate bool) error {
 	return nil
 }
 
+func ensureAnnotationLockHeldLocked(state *documentAnnotationState, annotationID int, ownerClientID string) error {
+	lock := state.AnnotationLocks[annotationID]
+	if lock == nil {
+		return ErrAnnotationLockRequired
+	}
+	if lock.OwnerClientID != ownerClientID {
+		return ErrAnnotationLocked
+	}
+	return nil
+}
+
 func toAnnotationMessagePtr(annotation *entity.Annotation) *annotationMessage {
 	if annotation == nil {
 		return nil
@@ -464,6 +610,28 @@ func cloneAnnotation(annotation *entity.Annotation) *entity.Annotation {
 	}
 	copy := *annotation
 	return &copy
+}
+
+func toAnnotationLockMessage(lock *annotationLockState) annotationLockMessage {
+	return annotationLockMessage{
+		AnnotationID:  lock.AnnotationID,
+		User:          lock.User,
+		OwnerClientID: lock.OwnerClientID,
+		LockedAt:      lock.LockedAt.Unix(),
+	}
+}
+
+func listAnnotationLocks(state *documentAnnotationState) []annotationLockMessage {
+	locks := make([]annotationLockMessage, 0, len(state.AnnotationLocks))
+	for _, lock := range state.AnnotationLocks {
+		locks = append(locks, toAnnotationLockMessage(lock))
+	}
+
+	slices.SortFunc(locks, func(a, b annotationLockMessage) int {
+		return a.AnnotationID - b.AnnotationID
+	})
+
+	return locks
 }
 
 func (s *AnnotationStore) ensureNextIDLocked() error {

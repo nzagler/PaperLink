@@ -3,7 +3,7 @@ import { useRoute } from 'vue-router'
 import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?worker'
 import { apiFetch } from '@/auth/api'
-import type { CollabClientMessage, CollabServerMessage, CollabStatus } from '@/lib/pdf_collab'
+import type { CollabClientMessage, CollabServerMessage, CollabStatus, CollabUser } from '@/lib/pdf_collab'
 
 pdfjsLib.GlobalWorkerOptions.workerPort = new pdfWorker()
 type CollabMessageListener = (message: CollabServerMessage) => void
@@ -23,6 +23,8 @@ export function usePdfReader() {
   const readerError = ref<string | null>(null)
   const collabStatus = ref<CollabStatus>('idle')
   const collabError = ref<string | null>(null)
+  const collabClientId = ref<string | null>(null)
+  const collabSelf = ref<CollabUser | null>(null)
   const pageRenderVersion = ref(0)
 
   let keydownHandler: ((e: KeyboardEvent) => void) | null = null
@@ -72,6 +74,8 @@ export function usePdfReader() {
     collabToken++
     collabStatus.value = 'idle'
     collabError.value = null
+    collabClientId.value = null
+    collabSelf.value = null
 
     if (!collabSocket) return
 
@@ -147,6 +151,20 @@ export function usePdfReader() {
     })
   }
 
+  function lockAnnotation(annotationId: number) {
+    return sendCollabMessage({
+      type: 'annotation:lock',
+      annotationId,
+    })
+  }
+
+  function unlockAnnotation(annotationId: number) {
+    return sendCollabMessage({
+      type: 'annotation:unlock',
+      annotationId,
+    })
+  }
+
   async function connectCollab() {
     const documentID = pdfID.value
     if (!documentID) {
@@ -191,6 +209,10 @@ export function usePdfReader() {
 
         try {
           const message = JSON.parse(String(event.data ?? '{}')) as CollabServerMessage
+          if (message?.type === 'room_state') {
+            collabClientId.value = typeof message.clientId === 'string' ? message.clientId : null
+            collabSelf.value = message.user ?? null
+          }
           if (message?.type === 'error' && typeof message.error === 'string') {
             collabError.value = message.error
           }
@@ -207,6 +229,8 @@ export function usePdfReader() {
       socket.onclose = () => {
         if (token !== collabToken || collabSocket !== socket) return
         collabSocket = null
+        collabClientId.value = null
+        collabSelf.value = null
         if (collabStatus.value !== 'disconnected') {
           setCollabDisconnected('Live sync disconnected.')
         }
@@ -506,6 +530,8 @@ export function usePdfReader() {
     readerError,
     collabStatus,
     collabError,
+    collabClientId,
+    collabSelf,
     pageRenderVersion,
     subscribeCollabMessages,
     requestPageAnnotations,
@@ -513,6 +539,8 @@ export function usePdfReader() {
     updateAnnotation,
     moveAnnotation,
     deleteAnnotation,
+    lockAnnotation,
+    unlockAnnotation,
     onThumbnailScroll,
     go,
     goFirst,

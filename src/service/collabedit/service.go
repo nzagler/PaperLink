@@ -3,7 +3,9 @@ package collabedit
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"paperlink/db/repo"
@@ -33,16 +35,26 @@ type TokenResult struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+type annotationLockMessage struct {
+	AnnotationID  int    `json:"annotationId"`
+	User          User   `json:"user"`
+	OwnerClientID string `json:"ownerClientId"`
+	LockedAt      int64  `json:"lockedAt"`
+}
+
 type outboundMessage struct {
-	Type         string              `json:"type"`
-	DocumentID   string              `json:"documentId,omitempty"`
-	User         *User               `json:"user,omitempty"`
-	Users        []User              `json:"users,omitempty"`
-	Page         *int64              `json:"page,omitempty"`
-	Annotation   *annotationMessage  `json:"annotation,omitempty"`
-	Annotations  []annotationMessage `json:"annotations,omitempty"`
-	AnnotationID *int                `json:"annotationId,omitempty"`
-	Error        string              `json:"error,omitempty"`
+	Type            string                  `json:"type"`
+	DocumentID      string                  `json:"documentId,omitempty"`
+	ClientID        string                  `json:"clientId,omitempty"`
+	User            *User                   `json:"user,omitempty"`
+	Users           []User                  `json:"users,omitempty"`
+	Page            *int64                  `json:"page,omitempty"`
+	Annotation      *annotationMessage      `json:"annotation,omitempty"`
+	Annotations     []annotationMessage     `json:"annotations,omitempty"`
+	AnnotationID    *int                    `json:"annotationId,omitempty"`
+	AnnotationLock  *annotationLockMessage  `json:"annotationLock,omitempty"`
+	AnnotationLocks []annotationLockMessage `json:"annotationLocks,omitempty"`
+	Error           string                  `json:"error,omitempty"`
 }
 
 type inboundMessage struct {
@@ -53,10 +65,11 @@ type inboundMessage struct {
 }
 
 type Service struct {
-	mu          sync.RWMutex
-	rooms       map[string]*room
-	tokens      *tokenStore
-	annotations *AnnotationStore
+	mu           sync.RWMutex
+	rooms        map[string]*room
+	tokens       *tokenStore
+	annotations  *AnnotationStore
+	nextClientID uint64
 }
 
 func NewService() *Service {
@@ -99,7 +112,7 @@ func (s *Service) HandleConnection(documentID, token string, ws *websocket.Conn)
 	s.annotations.MarkRoomActive(documentID)
 
 	currentRoom := s.getOrCreateRoom(documentID)
-	return currentRoom.handleConnection(s, ws, user)
+	return currentRoom.handleConnection(s, ws, s.allocateClientID(), user)
 }
 
 func (s *Service) handleIncomingPayload(currentRoom *room, client *client, payload []byte) error {
@@ -160,7 +173,7 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return ErrInvalidAnnotation
 		}
 
-		annotation, err := s.annotations.UpdateAnnotation(documentID, *message.Annotation)
+		annotation, err := s.annotations.UpdateAnnotation(documentID, client.id, *message.Annotation)
 		if err != nil {
 			return err
 		}
@@ -178,7 +191,7 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return ErrInvalidAnnotation
 		}
 
-		annotation, err := s.annotations.MoveAnnotation(documentID, *message.Annotation)
+		annotation, err := s.annotations.MoveAnnotation(documentID, client.id, *message.Annotation)
 		if err != nil {
 			return err
 		}
@@ -196,7 +209,7 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return ErrInvalidAnnotation
 		}
 
-		if err := s.annotations.DeleteAnnotation(documentID, *message.AnnotationID); err != nil {
+		if err := s.annotations.DeleteAnnotation(documentID, client.id, *message.AnnotationID); err != nil {
 			return err
 		}
 
@@ -205,6 +218,43 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			DocumentID:   documentID,
 			User:         &client.user,
 			AnnotationID: message.AnnotationID,
+		}, nil)
+		return nil
+
+	case "annotation:lock":
+		if message.AnnotationID == nil {
+			return ErrInvalidAnnotation
+		}
+
+		lock, err := s.annotations.AcquireAnnotationLock(documentID, *message.AnnotationID, client.id, client.user)
+		if err != nil {
+			return err
+		}
+
+		currentRoom.broadcast(outboundMessage{
+			Type:           "annotation:locked",
+			DocumentID:     documentID,
+			AnnotationLock: lock,
+		}, nil)
+		return nil
+
+	case "annotation:unlock":
+		if message.AnnotationID == nil {
+			return ErrInvalidAnnotation
+		}
+
+		lock, err := s.annotations.ReleaseAnnotationLock(documentID, *message.AnnotationID, client.id)
+		if err != nil {
+			return err
+		}
+		if lock == nil {
+			return nil
+		}
+
+		currentRoom.broadcast(outboundMessage{
+			Type:           "annotation:unlocked",
+			DocumentID:     documentID,
+			AnnotationLock: lock,
 		}, nil)
 		return nil
 
@@ -265,6 +315,11 @@ func (s *Service) removeRoomIfEmpty(currentRoom *room) bool {
 
 	delete(s.rooms, currentRoom.documentID)
 	return true
+}
+
+func (s *Service) allocateClientID() string {
+	id := atomic.AddUint64(&s.nextClientID, 1)
+	return strconv.FormatUint(id, 10)
 }
 
 func (s *Service) sendError(ws *websocket.Conn, message string) {

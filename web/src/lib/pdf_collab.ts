@@ -18,15 +18,25 @@ export type CollabAnnotationMessage = {
   positionY: number
 }
 
+export type CollabAnnotationLock = {
+  annotationId: number
+  user: CollabUser
+  ownerClientId: string
+  lockedAt: number
+}
+
 export type CollabServerMessage = {
   type: string
   documentId?: string
+  clientId?: string
   user?: CollabUser
   users?: CollabUser[]
   page?: number
   annotation?: CollabAnnotationMessage
   annotations?: CollabAnnotationMessage[]
   annotationId?: number
+  annotationLock?: CollabAnnotationLock
+  annotationLocks?: CollabAnnotationLock[]
   error?: string
 }
 

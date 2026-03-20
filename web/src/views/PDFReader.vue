@@ -197,6 +197,27 @@
                   </div>
                 </div>
 
+                <div
+                  v-if="lockedAnnotations.length > 0"
+                  class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100"
+                >
+                  <div class="font-semibold uppercase tracking-[0.16em]">
+                    Active Locks
+                  </div>
+                  <div class="mt-2 space-y-1.5">
+                    <div
+                      v-for="lock in lockedAnnotations"
+                      :key="lock.annotationId"
+                      class="flex items-center justify-between gap-3"
+                    >
+                      <span>Annotation #{{ lock.annotationId }}</span>
+                      <span class="truncate font-medium">
+                        {{ lock.isMine ? `${lock.username} (You)` : lock.username }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 <template v-if="selectedAnnotationType === 'TEXTBOX'">
                   <div class="space-y-2">
                     <div class="text-xs text-neutral-600 dark:text-neutral-300">Font color</div>
@@ -334,7 +355,7 @@
             </div>
 
             <div class="rounded-xl border border-dashed border-neutral-200 p-3 text-xs text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-              <span v-if="collabStatus === 'connected'">Use `Select` to edit or delete existing annotations, `Text Box` to place new text, and `Draw` for freehand `CANVAS` annotations.</span>
+              <span v-if="collabStatus === 'connected'">Use `Select` to edit or delete existing annotations, `Text Box` to place new text, and `Draw` for freehand `CANVAS` annotations. Locked annotations stay visible, show an owner tag, and are disabled for everyone else.</span>
               <span v-else>Annotation editing is available once live sync is connected.</span>
             </div>
           </CardContent>
@@ -365,6 +386,7 @@ const {
   readerError,
   collabStatus,
   collabError,
+  collabClientId,
   pageRenderVersion,
   subscribeCollabMessages,
   requestPageAnnotations,
@@ -372,6 +394,8 @@ const {
   updateAnnotation,
   moveAnnotation,
   deleteAnnotation,
+  lockAnnotation,
+  unlockAnnotation,
   onThumbnailScroll,
   go,
   goFirst,
@@ -385,6 +409,7 @@ const {
   annotationCount,
   activeTool,
   overlayReady,
+  lockedAnnotations,
   selectedAnnotationId,
   selectedAnnotationType,
   textboxFill,
@@ -403,12 +428,15 @@ const {
   pdfCanvasEl: canvasEl,
   pageRenderVersion,
   collabStatus,
+  collabClientId,
   subscribeCollabMessages,
   requestPageAnnotations,
   createAnnotation,
   updateAnnotation,
   moveAnnotation,
   deleteAnnotation,
+  lockAnnotation,
+  unlockAnnotation,
 })
 
 const pageInput = ref('1')
