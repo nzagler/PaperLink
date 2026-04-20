@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+docs
+
+**/node_modules
+**/dist
+**/bin
+**/coverage
+**/.DS_Store
+
+src/data
+web/.vite
+web/npm-debug.log*

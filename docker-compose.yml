@@ -1,0 +1,14 @@
+services:
+  paperlink:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paperlink:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - paperlink-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  paperlink-data:

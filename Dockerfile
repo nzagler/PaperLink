@@ -1,4 +1,4 @@
-FROM node:20-bookworm AS web-build
+FROM node:22.12-bookworm AS web-build
 WORKDIR /src/web
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +36,6 @@ RUN cd /src/integrations/digi4school && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go
 
 FROM debian:bookworm-slim
 
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-bin \
     ghostscript \
@@ -49,12 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=web-build /src/web/dist /app/dist
-
 COPY --from=go-build /src/app /app/app
-
 COPY --from=go-build /src/integrations/d4s /app/d4s
 COPY --from=go-build /src/integrations/d4s /app/integrations/d4s
-RUN ls -lah /app/
 RUN mkdir -p /app/data
+
+EXPOSE 8080
+VOLUME ["/app/data"]
 
 ENTRYPOINT ["/app/app"]

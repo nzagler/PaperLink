@@ -42,3 +42,23 @@ The platform is built for self-hosting.
 
 Paperlink is released under the **GPL-3.0 License**.  
 
+## Docker
+
+Build the image from the repository root:
+
+```bash
+docker build -t paperlink:latest .
+```
+
+Run it with a persistent data volume:
+
+```bash
+docker run -d --name paperlink -p 8080:8080 -v paperlink-data:/app/data paperlink:latest
+```
+
+Or use Docker Compose:
+
+```bash
+docker compose up --build -d
+```
+
