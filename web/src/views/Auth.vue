@@ -53,7 +53,7 @@ watch(activeTab, () => {
         class="hidden lg:flex flex-col justify-center px-20
              bg-neutral-950 border-r border-neutral-800"
     >
-      <h1 class="text-5xl font-semibold tracking-wide">PAPERLINK</h1>
+      <h1 class="text-5xl font-semibold tracking-wide">PAPERLINK-Test</h1>
       <p class="mt-3 text-sm text-neutral-400 tracking-wide">
         SELF-HOSTED PDF MANAGEMENT
       </p>
