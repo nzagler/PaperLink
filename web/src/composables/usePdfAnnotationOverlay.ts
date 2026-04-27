@@ -33,6 +33,7 @@ type OverlayOptions = {
 type FabricAnnotationMeta = {
   annotationId?: number
   pendingCreate?: boolean
+  pendingPage?: number
 }
 
 type FabricTextboxWithId = Textbox & FabricAnnotationMeta
@@ -424,21 +425,25 @@ export function usePdfAnnotationOverlay({
     return renderedObjects.has(annotationID)
   }
 
-  function findPendingTextbox() {
-    if (!fabricCanvas) {
-      return null
+    function findPendingTextbox(page: number) {
+        if (!fabricCanvas) {
+            return null
+        }
+
+        for (const object of fabricCanvas.getObjects()) {
+            if (!isTextboxObject(object) || !object.pendingCreate) {
+                continue
+            }
+
+            if (object.pendingPage !== undefined && object.pendingPage !== page) {
+                continue
+            }
+
+            return object
+        }
+
+        return null
     }
-
-    for (const object of fabricCanvas.getObjects()) {
-      if (!isTextboxObject(object) || !object.pendingCreate) {
-        continue
-      }
-
-      return object
-    }
-
-    return null
-  }
 
   function areCanvasPathsEqual(a: CanvasPathCommand[], b: CanvasPathCommand[]) {
     if (a.length !== b.length) {
@@ -834,6 +839,7 @@ export function usePdfAnnotationOverlay({
       objectCaching: true,
     }) as FabricTextboxWithId
     textbox.pendingCreate = true
+    textbox.pendingPage = currentPage.value
 
     fabricCanvas.add(textbox)
     fabricCanvas.setActiveObject(textbox)
@@ -1014,6 +1020,33 @@ export function usePdfAnnotationOverlay({
     syncStyleControls()
   }
 
+  function applyRemoteAnnotationUpdate(annotation: PDFAnnotation) {
+      const previousPage = annotationPageIndex.get(annotation.id)
+      upsertCachedAnnotation(annotation)
+
+      if (previousPage === currentPage.value && annotation.page !== currentPage.value) {
+          syncRenderedAnnotations(currentPage.value)
+          return
+      }
+
+      if (annotation.page === currentPage.value) {
+          const object = findFabricObject(annotation.id)
+          if (object && annotation.type === 'TEXTBOX' && isTextboxObject(object)) {
+              const didApply = applyAnnotationToTextbox(object, annotation)
+              if (didApply) {
+                  annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
+                  syncLockOverlays()
+                  fabricCanvas?.requestRenderAll()
+                  return
+              }
+          }
+
+          if (!hasFabricObject(annotation.id) || annotation.type === 'CANVAS') {
+              syncRenderedAnnotations(currentPage.value)
+          }
+      }
+  }
+
   function handleServerMessage(message: CollabServerMessage) {
     switch (message.type) {
       case 'room_state': {
@@ -1090,67 +1123,26 @@ export function usePdfAnnotationOverlay({
       }
 
       case 'annotation:created':
-      case 'annotation:updated':
+      case 'annotation:updated': {
+          if (!message.annotation) return
+          const annotation = fromCollabAnnotation(message.annotation)
+          if (!annotation) return
+
+          applyRemoteAnnotationUpdate(annotation)
+          return
+      }
+
       case 'annotation:moved': {
-        if (!message.annotation) {
-          return
-        }
-
+        if (!message.annotation) return
         const annotation = fromCollabAnnotation(message.annotation)
-        if (!annotation) {
-          return
+        if (!annotation) return
+
+        if (activeSelectionLockId === annotation.id && isOwnLock(getAnnotationLock(annotation.id))) {
+            upsertCachedAnnotation(annotation)
+            return
         }
 
-        const previousPage = annotationPageIndex.get(annotation.id)
-        upsertCachedAnnotation(annotation)
-
-        if (message.type === 'annotation:created') {
-          if (annotation.type === 'TEXTBOX') {
-            const pendingTextbox = findPendingTextbox()
-            if (pendingTextbox) {
-              applyAnnotationToTextbox(pendingTextbox, annotation)
-              fabricCanvas?.requestRenderAll()
-              syncLockOverlays()
-              syncSelectionState()
-              void nextTick(() => {
-                persistTextbox(pendingTextbox)
-              })
-              return
-            }
-          } else {
-            const pendingPath = findPendingCanvasPath(annotation)
-            if (pendingPath) {
-              applyAnnotationToPath(pendingPath, annotation)
-              renderedObjects.set(annotation.id, pendingPath)
-              annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
-              fabricCanvas?.requestRenderAll()
-              syncLockOverlays()
-              return
-            }
-          }
-        }
-
-        if (previousPage === currentPage.value && annotation.page !== currentPage.value) {
-          syncRenderedAnnotations(currentPage.value)
-          return
-        }
-
-        if (annotation.page === currentPage.value) {
-          const object = findFabricObject(annotation.id)
-          if (object && annotation.type === 'TEXTBOX' && isTextboxObject(object)) {
-            const didApply = applyAnnotationToTextbox(object, annotation)
-            if (didApply) {
-              annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
-              syncLockOverlays()
-              fabricCanvas?.requestRenderAll()
-              return
-            }
-          }
-
-          if (!hasFabricObject(annotation.id) || annotation.type === 'CANVAS') {
-            syncRenderedAnnotations(currentPage.value)
-          }
-        }
+        applyRemoteAnnotationUpdate(annotation)
         return
       }
 
