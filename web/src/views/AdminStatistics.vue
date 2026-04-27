@@ -156,38 +156,50 @@ onMounted(async () => {
         <Card class="border border-neutral-200 dark:border-neutral-800">
           <CardHeader class="pb-2">
             <CardTitle class="text-sm">Instance overview</CardTitle>
-            <CardDescription class="text-[11px]">Key counts at a glance.</CardDescription>
+            <CardDescription class="text-[11px]">Counts within comparable groups.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div class="space-y-3">
-              <div
-                  v-for="item in [
-                  { label: 'Users', value: stats.userCount, color: 'bg-emerald-500 dark:bg-emerald-400' },
-                  { label: 'Documents', value: stats.documentCount, color: 'bg-blue-500 dark:bg-blue-400' },
-                  { label: 'Total pages', value: stats.totalPages, color: 'bg-violet-500 dark:bg-violet-400' },
-                  { label: 'D4S books', value: stats.d4sBookCount, color: 'bg-amber-500 dark:bg-amber-400' },
-                  { label: 'D4S accounts', value: stats.d4sAccountCount, color: 'bg-rose-500 dark:bg-rose-400' },
-                ]"
-                  :key="item.label"
-                  class="space-y-1"
-              >
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-neutral-600 dark:text-neutral-300">{{ item.label }}</span>
-                  <span class="tabular-nums font-medium text-neutral-900 dark:text-neutral-100">{{ formatNumber(item.value) }}</span>
-                </div>
-                <div class="h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
-                  <div
-                      class="h-full rounded-full transition-all duration-700"
-                      :class="item.color"
-                      :style="{
-                      width: Math.max(...[stats.userCount, stats.documentCount, stats.totalPages, stats.d4sBookCount, stats.d4sAccountCount]) > 0
-                        ? `${(item.value / Math.max(stats.userCount, stats.documentCount, stats.totalPages, stats.d4sBookCount, stats.d4sAccountCount)) * 100}%`
-                        : '0%'
-                    }"
-                  />
+          <CardContent class="space-y-4">
+
+            <div>
+              <p class="text-[11px] font-medium uppercase tracking-[0.14em] text-neutral-500 dark:text-neutral-400 mb-2">People</p>
+              <div class="space-y-2">
+                <div v-for="item in [
+          { label: 'Total users',    value: stats.userCount,       max: Math.max(stats.userCount, stats.d4sAccountCount), color: 'bg-emerald-500' },
+          { label: 'D4S accounts',   value: stats.d4sAccountCount, max: Math.max(stats.userCount, stats.d4sAccountCount), color: 'bg-emerald-200 dark:bg-emerald-800' },
+        ]" :key="item.label" class="flex items-center gap-3">
+                  <span class="w-28 shrink-0 text-xs text-neutral-500 dark:text-neutral-400">{{ item.label }}</span>
+                  <div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+                    <div
+                        class="h-full rounded-full transition-all duration-700"
+                        :class="item.color"
+                        :style="{ width: item.max > 0 ? `${Math.round((item.value / item.max) * 100)}%` : '0%' }"
+                    />
+                  </div>
+                  <span class="w-12 shrink-0 text-right text-xs font-medium tabular-nums text-neutral-900 dark:text-neutral-100">{{ formatNumber(item.value) }}</span>
                 </div>
               </div>
             </div>
+
+            <div class="border-t border-neutral-100 dark:border-neutral-800 pt-4">
+              <p class="text-[11px] font-medium uppercase tracking-[0.14em] text-neutral-500 dark:text-neutral-400 mb-2">Content</p>
+              <div class="space-y-2">
+                <div v-for="item in [
+          { label: 'Documents',  value: stats.documentCount, max: Math.max(stats.documentCount, stats.d4sBookCount), color: 'bg-violet-500' },
+          { label: 'D4S books',  value: stats.d4sBookCount,  max: Math.max(stats.documentCount, stats.d4sBookCount), color: 'bg-violet-200 dark:bg-violet-900' },
+        ]" :key="item.label" class="flex items-center gap-3">
+                  <span class="w-28 shrink-0 text-xs text-neutral-500 dark:text-neutral-400">{{ item.label }}</span>
+                  <div class="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
+                    <div
+                        class="h-full rounded-full transition-all duration-700"
+                        :class="item.color"
+                        :style="{ width: item.max > 0 ? `${Math.round((item.value / item.max) * 100)}%` : '0%' }"
+                    />
+                  </div>
+                  <span class="w-12 shrink-0 text-right text-xs font-medium tabular-nums text-neutral-900 dark:text-neutral-100">{{ formatNumber(item.value) }}</span>
+                </div>
+              </div>
+            </div>
+
           </CardContent>
         </Card>
 

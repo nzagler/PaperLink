@@ -1108,7 +1108,6 @@ export function usePdfAnnotationOverlay({
           if (annotation.type === 'TEXTBOX') {
             const pendingTextbox = findPendingTextbox()
             if (pendingTextbox) {
-              upsertCachedAnnotation(annotation)
               applyAnnotationToTextbox(pendingTextbox, annotation)
               fabricCanvas?.requestRenderAll()
               syncLockOverlays()
