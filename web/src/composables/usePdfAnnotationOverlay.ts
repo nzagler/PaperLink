@@ -610,10 +610,14 @@ export function usePdfAnnotationOverlay({
     fabricCanvas.requestRenderAll()
   }
 
-  function serializeTextbox(textbox: FabricTextboxWithId, width: number, height: number): PDFAnnotation {
+    function serializeTextbox(textbox: FabricTextboxWithId, width: number, height: number): PDFAnnotation {
+        const cached = typeof textbox.annotationId === 'number'
+            ? getCachedAnnotation(textbox.annotationId)
+            : null
+
     return createTextboxAnnotation({
       id: textbox.annotationId ?? 0,
-      page: currentPage.value,
+      page: cached?.page ?? currentPage.value,
       text: textbox.text ?? '',
       positionX: (textbox.left ?? 0) / width,
       positionY: (textbox.top ?? 0) / height,
@@ -624,10 +628,14 @@ export function usePdfAnnotationOverlay({
     })
   }
 
-  function serializeCanvasPath(path: FabricPathWithId, width: number, height: number) {
+    function serializeCanvasPath(path: FabricPathWithId, width: number, height: number) {
+        const cached = typeof path.annotationId === 'number'
+            ? getCachedAnnotation(path.annotationId)
+            : null
+
     return createCanvasAnnotation({
       id: path.annotationId ?? 0,
-      page: currentPage.value,
+      page: cached?.page ?? currentPage.value,
       positionX: (path.left ?? 0) / width,
       positionY: (path.top ?? 0) / height,
       path: normalizeCanvasPath(path.path as CanvasPathCommand[], width, height),
