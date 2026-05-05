@@ -23,6 +23,7 @@ import {
   BookOpen as D4SIcon,
   Plug as IntegrationsIcon,
   BarChart3 as StatsIcon,
+  ClipboardList as TasksIcon,
   SlidersHorizontal as AdminSettingsIcon,
   ChevronUp,
   LogOut,
@@ -77,7 +78,7 @@ const adminItems = computed(() => [
   { title: 'Settings', to: '/admin/settings', icon: AdminSettingsIcon },
   { title: 'Integrations', to: '/admin/integrations', icon: IntegrationsIcon },
   { title: 'Tasks', to: '/admin/tasks', icon: StatsIcon },
-  { title: 'Statistics', to: '/admin/statistics', icon: StatsIcon },
+  { title: 'Statistics', to: '/admin/statistics', icon: TasksIcon },
   { title: 'Invites', to: '/admin/invites', icon: Ticket },
 ])
 

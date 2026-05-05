@@ -11,9 +11,10 @@ import (
 )
 
 type FileNode struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Size uint64 `json:"size"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Size      uint64 `json:"size"`
+	PageCount uint64 `json:"pageCount"`
 }
 
 type DirNode struct {
@@ -85,9 +86,10 @@ func mapDocuments(docs []entity.Document) []FileNode {
 
 	for _, d := range docs {
 		files = append(files, FileNode{
-			ID:   d.UUID,
-			Name: d.Name,
-			Size: d.File.Size,
+			ID:        d.UUID,
+			Name:      d.Name,
+			Size:      d.File.Size,
+			PageCount: d.File.Pages,
 		})
 	}
 

@@ -56,7 +56,7 @@ export function useSearchView() {
         title: it.title,
         description: it.path ? `Folder: ${it.path}` : 'Folder: /',
         tags: pathToTags(it.path),
-        pages: 0,
+        pages: it.pageCount ?? 0,
         size: formatBytes(it.sizeBytes),
         updatedAt: '',
         owner: 'You',
