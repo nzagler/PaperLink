@@ -40,7 +40,7 @@ function revokeThumbnailUrls() {
 }
 
 async function fetchFirstThumbnail(bookID: number): Promise<string | null> {
-  const res = await apiFetch(`/api/v1/d4s/thumbnail/${bookID}`)
+  const res = await fetch(`/api/v1/d4s/thumbnail/${bookID}`)
   if (!res.ok) return null
 
   const blob = await res.blob()
@@ -56,6 +56,7 @@ async function loadBookThumbnails(nextBooks: Digi4SchoolBook[]) {
     while (cursor < nextBooks.length) {
       const i = cursor++
       const book = nextBooks[i]
+      if (!book) continue
       const url = await fetchFirstThumbnail(book.id).catch(() => null)
       if (url) nextThumbnails[book.id] = url
     }

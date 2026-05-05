@@ -294,6 +294,7 @@
                 v-for="result in filteredResults"
                 :key="result.id"
                 class="group border border-neutral-200 bg-white transition hover:-translate-y-[1px] hover:border-emerald-600/80 hover:shadow-md hover:shadow-emerald-900/10 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-emerald-500/80"
+                @click="openResult(result.id)"
             >
               <div class="flex gap-3 p-3">
                 <!-- Icon column -->
@@ -410,6 +411,14 @@ import {
   Loader2,
   ChevronDown,
 } from 'lucide-vue-next'
+
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+function openResult(id: string | number) {
+  void router.push('/pdf/' + id)
+}
 
 const {
   searchQuery,

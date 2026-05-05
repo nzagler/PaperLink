@@ -77,8 +77,8 @@ const navItems = computed(() => [
 const adminItems = computed(() => [
   { title: 'Settings', to: '/admin/settings', icon: AdminSettingsIcon },
   { title: 'Integrations', to: '/admin/integrations', icon: IntegrationsIcon },
-  { title: 'Tasks', to: '/admin/tasks', icon: StatsIcon },
-  { title: 'Statistics', to: '/admin/statistics', icon: TasksIcon },
+  { title: 'Tasks', to: '/admin/tasks', icon: TasksIcon },
+  { title: 'Statistics', to: '/admin/statistics', icon: StatsIcon },
   { title: 'Invites', to: '/admin/invites', icon: Ticket },
 ])
 
