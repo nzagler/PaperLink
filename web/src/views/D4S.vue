@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { MoreVertical, RefreshCcw, LibraryBig } from "lucide-vue-next"
+import { apiFetch } from "@/auth/api"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -40,7 +41,7 @@ function revokeThumbnailUrls() {
 }
 
 async function fetchFirstThumbnail(bookID: number): Promise<string | null> {
-  const res = await fetch(`/api/v1/d4s/thumbnail/${bookID}`)
+  const res = await apiFetch(`/api/v1/d4s/thumbnail/${bookID}`)
   if (!res.ok) return null
 
   const blob = await res.blob()
