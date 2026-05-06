@@ -7,6 +7,7 @@ export type StructureFileNode = {
   size: number
   pageCount: number
   tags: string[]
+  updatedAt: string
 }
 
 export type StructureDirNode = {
@@ -23,6 +24,7 @@ export type SearchIndexItem = {
   sizeBytes: number
   pageCount: number
   tags: string[]
+  updatedAt: string
 }
 
 export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
@@ -49,6 +51,7 @@ export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
         sizeBytes: f.size ?? 0,
         pageCount: f.pageCount ?? 0,
         tags: f.tags ?? [],
+        updatedAt: f.updatedAt ?? ""
       })
     }
 

@@ -58,7 +58,7 @@ export function useSearchView() {
         tags: pathToTags(it.path),
         pages: it.pageCount ?? 0,
         size: formatBytes(it.sizeBytes),
-        updatedAt: '',
+        updatedAt: it.updatedAt ? new Date(it.updatedAt).toLocaleDateString() : '—',
         owner: 'You',
         shared: false,
         path: it.path,
@@ -106,9 +106,11 @@ export function useSearchView() {
       list = list.filter((item) => selectedTags.value.every((tag) => item.tags.includes(tag)))
     }
 
-    if (selectedSort.value === 'az') {
-      list.sort((a, b) => a.title.localeCompare(b.title))
-    }
+      if (selectedSort.value === 'az') {
+          list.sort((a, b) => a.title.localeCompare(b.title))
+      } else if (selectedSort.value === 'recent') {
+          list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      }
 
     return list
   })

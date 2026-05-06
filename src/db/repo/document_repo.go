@@ -26,7 +26,7 @@ func (n *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, 
 
 func (r *DocumentRepo) GetAllByUserIdWithFile(userId int) ([]entity.Document, error) {
 	var result []entity.Document
-	err := r.db.Preload("File").Where("user_id = ?", userId).Find(&result).Error
+	err := r.db.Preload("File").Preload("Tags").Where("user_id = ?", userId).Find(&result).Error
 	return result, err
 }
 

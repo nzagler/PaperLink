@@ -597,7 +597,7 @@ async function deleteTargetItem() {
     const res = await apiFetch(url, { method: 'DELETE' })
     if (!res.ok) {
       const json = await res.json().catch(() => null)
-      throw new Error(json?.message || 'Failed to delete item.')
+      throw new Error(json?.error ?? json?.message ?? `Failed to delete item. (${res.status})`)
     }
 
     const parentPath = pathIds.value.slice(0, -1)
