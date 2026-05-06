@@ -43,8 +43,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 
@@ -207,8 +206,6 @@ function updatePath(newPath: string[], pushToHistory = true) {
   history.value.push(normalized)
   historyIndex.value++
 }
-
-
 
 function breadcrumbClick(index: number) {
   const newPath = index < 0 ? [] : pathIds.value.slice(0, index + 1)

@@ -29,11 +29,13 @@ function formatBytes(bytes: number) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+/* Placeholder
 function pathToTags(path: string) {
   const normalized = (path || '').trim().replace(/^\/+|\/+$/g, '')
   if (!normalized) return ['Root']
   return normalized.split('/').filter(Boolean)
 }
+*/
 
 export function useSearchView() {
   const searchQuery = ref('')
@@ -55,7 +57,7 @@ export function useSearchView() {
         id: it.id,
         title: it.title,
         description: it.path ? `Folder: ${it.path}` : 'Folder: /',
-        tags: pathToTags(it.path),
+        tags: it.tags ?? [],
         pages: it.pageCount ?? 0,
         size: formatBytes(it.sizeBytes),
         updatedAt: it.updatedAt ? new Date(it.updatedAt).toLocaleDateString() : '—',

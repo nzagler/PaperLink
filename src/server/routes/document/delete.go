@@ -2,8 +2,6 @@ package document
 
 import (
 	"net/http"
-	"strconv"
-
 	"paperlink/db/repo"
 	"paperlink/server/routes"
 
@@ -25,8 +23,8 @@ import (
 // @Router       /api/v1/documents/delete/{id} [delete]
 // @Security     BearerAuth
 func Delete(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
+	id := c.Param("id")
+	if id == "" {
 		routes.JSONError(c, http.StatusBadRequest, "invalid document id")
 		return
 	}

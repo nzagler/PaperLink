@@ -18,9 +18,9 @@ func newDocumentRepo() *DocumentRepo {
 
 var Document = newDocumentRepo()
 
-func (n *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, error) {
+func (r *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, error) {
 	var annotations []entity.Annotation
-	err := n.db.Where("document_id = ?", documentID).Find(&annotations).Error
+	err := r.db.Where("document_id = ?", documentID).Find(&annotations).Error
 	return annotations, err
 }
 
@@ -50,6 +50,22 @@ func (r *DocumentRepo) GetByUUIDWithTagsAndFile(uuid string) *entity.Document {
 		return nil
 	}
 	return &doc
+}
+
+func (r *DocumentRepo) DeleteByUUID(uuid string) error {
+	res := r.db.
+		Where("uuid = ?", uuid).
+		Delete(&entity.Document{})
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entity.Document, error) {
