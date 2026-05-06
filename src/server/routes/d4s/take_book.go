@@ -2,6 +2,11 @@ package d4s
 
 import (
 	"net/http"
+	"os"
+	"paperlink/ptf"
+	"paperlink/pvf"
+	"paperlink/util"
+	"path/filepath"
 	"strconv"
 
 	"paperlink/db/entity"
@@ -56,9 +61,42 @@ func TakeBook(c *gin.Context) {
 		FileUUID:    book.FileUUID,
 	}
 
+	file := repo.FileDocument.GetByUUID(book.FileUUID)
+	if file == nil {
+		routes.JSONError(c, http.StatusNotFound, "book file not found")
+		return
+	}
+
 	if err := repo.Document.Save(&doc); err != nil {
 		routes.JSONError(c, http.StatusInternalServerError, "failed to create document")
 		return
+	}
+
+	thumbDst := "./data/uploads/" + book.FileUUID + "_thumb.ptf"
+	if _, err := os.Stat(thumbDst); os.IsNotExist(err) {
+		pageData, err := pvf.ReadPage(file.Path, 1)
+		if err != nil {
+			log.Warnf("failed to read first pvf page for thumbnail: %v", err)
+		} else {
+			if err := os.MkdirAll("./data/tmp/uploads", 0750); err == nil {
+				tmpPDF := "./data/tmp/uploads/" + book.FileUUID + "_thumb_src.pdf"
+				defer os.Remove(tmpPDF)
+
+				if err := os.WriteFile(tmpPDF, pageData, 0o644); err != nil {
+					log.Warnf("failed to write temp pdf for thumbnail: %v", err)
+				} else {
+					thumbPTFFile, err := ptf.WriteThumbnailPTFFromPDF(tmpPDF)
+					if err != nil {
+						log.Warnf("failed to generate thumbnail ptf: %v", err)
+					} else {
+						defer os.RemoveAll(filepath.Dir(thumbPTFFile))
+						if err := util.CopyFile(thumbPTFFile, thumbDst); err != nil {
+							log.Warnf("failed to copy thumbnail ptf: %v", err)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	routes.JSONSuccessOK(c, TakeBookResponse{ID: doc.UUID})
