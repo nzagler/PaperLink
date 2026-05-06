@@ -40,10 +40,9 @@ function revokeThumbnailUrls() {
   }
 }
 
-async function fetchFirstThumbnail(bookID: number): Promise<string | null> {
-  const res = await apiFetch(`/api/v1/d4s/thumbnail/${bookID}`)
+async function fetchFirstThumbnail(id: number): Promise<string | null> {
+  const res = await apiFetch(`/api/v1/d4s/thumbnail/${id}`)
   if (!res.ok) return null
-
   const blob = await res.blob()
   return URL.createObjectURL(blob)
 }

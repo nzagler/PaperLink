@@ -111,8 +111,14 @@ func GetThumbnail(c *gin.Context) {
 		return
 	}
 
+	if _, err := os.Stat(file.Path); err != nil {
+		c.String(http.StatusNotFound, "pdf file missing on disk")
+		return
+	}
+
 	thumbPath, err := ensureD4SThumbnail(book.FileUUID, file.Path)
 	if err != nil {
+		fmt.Printf("ensureD4SThumbnail error for uuid=%s path=%s: %v\n", book.FileUUID, file.Path, err)
 		c.String(http.StatusInternalServerError, "failed to create thumbnail")
 		return
 	}
