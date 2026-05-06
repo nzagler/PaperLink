@@ -4,7 +4,7 @@ export type Digi4SchoolBook = {
   id: number
   uuid: string
   bookName: string
-  bookID: string
+  bookId: string
   accountID: number
 }
 

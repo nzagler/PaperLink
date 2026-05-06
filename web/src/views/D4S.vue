@@ -178,11 +178,11 @@ onBeforeUnmount(() => {
 
       <div v-else class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <Card
-          v-for="book in filteredBooks"
-          :key="book.id"
-          class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm"
+            v-for="book in filteredBooks"
+            :key="book.id"
+            class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm gap-0"
         >
-          <div class="relative aspect-[3/4]">
+          <div class="relative aspect-[3/4] mt-0">
             <img
               v-if="bookThumbnails[book.id]"
               :src="bookThumbnails[book.id]"
@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
                 {{ book.bookName }}
               </p>
               <p class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                BookID: {{ book.bookID }}
+                BookID: {{ book.bookId }}
               </p>
             </div>
 
