@@ -180,7 +180,7 @@ onBeforeUnmount(() => {
         <Card
             v-for="book in filteredBooks"
             :key="book.id"
-            class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm gap-0"
+            class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm gap-0 pt-0"
         >
           <div class="relative aspect-[3/4] mt-0">
             <img

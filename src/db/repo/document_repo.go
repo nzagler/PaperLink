@@ -1,9 +1,11 @@
 package repo
 
 import (
-	"gorm.io/gorm"
 	"paperlink/db/entity"
 	"strings"
+	"time"
+
+	"gorm.io/gorm"
 )
 
 type DocumentRepo struct {
@@ -99,4 +101,10 @@ func (r *DocumentRepo) UpdateFieldsAndTags(doc *entity.Document, updates map[str
 
 		return nil
 	})
+}
+
+func (r *DocumentRepo) TouchUpdatedAt(uuid string) {
+	r.db.Model(&entity.Document{}).
+		Where("uuid = ?", uuid).
+		Update("updated_at", time.Now())
 }
