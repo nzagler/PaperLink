@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"os"
 	"os/exec"
 	"paperlink/db/entity"
@@ -20,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func StartSyncTask(accs []entity.Digi4SchoolAccount) (string, error) {
@@ -300,6 +301,17 @@ func rescanForDBInsert(dir string, books []Book) error {
 				if err != nil {
 					return fmt.Errorf("failed to read metadata file %s: %v", fullPath, err)
 				}
+
+				thumbPTFFile, err := ptf.WriteThumbnailPTFFromPVF(fullPath)
+				if err != nil {
+					return fmt.Errorf("failed to generate thumbnail ptf file %s: %v", fullPath, err)
+				}
+				thumbDst := strings.TrimSuffix(fullPath, filepath.Ext(fullPath)) + "_thumb.ptf"
+				if err := util.CopyFile(thumbPTFFile, thumbDst); err != nil {
+					_ = os.RemoveAll(filepath.Dir(thumbPTFFile))
+					return fmt.Errorf("failed to store thumbnail ptf file %s: %v", thumbDst, err)
+				}
+				_ = os.RemoveAll(filepath.Dir(thumbPTFFile))
 
 				fd := entity.FileDocument{
 					UUID:  book.UUID,

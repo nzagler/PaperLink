@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 
+import { apiFetch } from "@/auth/api"
 import { listD4SBooks, takeD4SBook, type Digi4SchoolBook } from "@/lib/d4s_api"
 
 type Notice = { type: "success" | "error"; message: string } | null

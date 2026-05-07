@@ -49,6 +49,54 @@ const DEFAULT_TEXTBOX_FONT_SIZE = 0.032
 const DEFAULT_DRAW_COLOR = '#ef4444'
 const DEFAULT_DRAW_STROKE_WIDTH = 0.004
 
+// Path is stored in normalized 0-1 coordinates. A tolerance of 0.001 equals
+// 0.1% of the page dimension — sub-pixel at any typical display size.
+const RDP_TOLERANCE = 0.001
+const COORD_PRECISION = 4
+
+function roundCoord(v: number): number {
+  const f = 10 ** COORD_PRECISION
+  return Math.round(v * f) / f
+}
+
+function pointToSegmentDistance(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq === 0) {
+    const ex = px - ax, ey = py - ay
+    return Math.sqrt(ex * ex + ey * ey)
+  }
+  return Math.abs(dy * px - dx * py + bx * ay - by * ax) / Math.sqrt(lenSq)
+}
+
+// Ramer-Douglas-Peucker on an index slice. Returns the subset of indices to keep.
+function rdp(indices: number[], pts: Array<{ x: number; y: number }>, tolerance: number): number[] {
+  if (indices.length <= 2) return indices
+  const first = indices[0]
+  const last = indices[indices.length - 1]
+  const ax = pts[first].x, ay = pts[first].y
+  const bx = pts[last].x, by = pts[last].y
+
+  let maxDist = 0
+  let maxAt = 0
+  for (let i = 1; i < indices.length - 1; i++) {
+    const d = pointToSegmentDistance(pts[indices[i]].x, pts[indices[i]].y, ax, ay, bx, by)
+    if (d > maxDist) { maxDist = d; maxAt = i }
+  }
+
+  if (maxDist > tolerance) {
+    const left = rdp(indices.slice(0, maxAt + 1), pts, tolerance)
+    const right = rdp(indices.slice(maxAt), pts, tolerance)
+    return [...left.slice(0, -1), ...right]
+  }
+  return [first, last]
+}
+
 export function usePdfAnnotationOverlay({
   currentPage,
   pdfCanvasEl,
@@ -94,6 +142,8 @@ export function usePdfAnnotationOverlay({
   let suppressedSelectionLockSync = 0
   let activeSelectionLockId: number | null = null
   let unsubscribeCollabMessages: (() => void) | null = null
+  let textboxDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingTextboxPersist: (() => void) | null = null
 
   function getOverlaySize() {
     const canvas = pdfCanvasEl.value
@@ -345,14 +395,34 @@ export function usePdfAnnotationOverlay({
   }
 
   function normalizeCanvasPath(path: CanvasPathCommand[], width: number, height: number) {
-    return path.map((command) => {
-      const normalized: CanvasPathCommand = [command[0]]
-      for (let index = 1; index < command.length; index += 1) {
-        const dimension = index % 2 === 1 ? width : height
-        normalized.push(dimension ? command[index] / dimension : 0)
+    // Step 1: normalize pixel coords → 0-1
+    const normalized = path.map((command) => {
+      const norm: CanvasPathCommand = [command[0]]
+      for (let i = 1; i < command.length; i++) {
+        const dim = i % 2 === 1 ? width : height
+        norm.push(dim ? command[i] / dim : 0)
       }
-      return normalized
+      return norm
     })
+
+    // Step 2: RDP simplification — use the endpoint of each command as the
+    // representative point. M is always kept; Q/L/C are filtered by RDP.
+    const pts = normalized.map((cmd) => {
+      const len = cmd.length
+      return len >= 3
+        ? { x: cmd[len - 2] as number, y: cmd[len - 1] as number }
+        : { x: cmd[1] as number ?? 0, y: cmd[2] as number ?? 0 }
+    })
+    const kept = new Set(rdp(normalized.map((_, i) => i), pts, RDP_TOLERANCE))
+
+    // Step 3: round to fixed precision
+    return normalized
+      .filter((cmd, i) => cmd[0] === 'M' || kept.has(i))
+      .map((cmd) => {
+        const rounded: CanvasPathCommand = [cmd[0]]
+        for (let i = 1; i < cmd.length; i++) rounded.push(roundCoord(cmd[i] as number))
+        return rounded
+      })
   }
 
   function applyPathAppearance(path: FabricPathWithId, annotation?: PDFCanvasAnnotation) {
@@ -393,6 +463,7 @@ export function usePdfAnnotationOverlay({
 
   function syncObjectInteractivity(object: FabricAnnotationObject) {
     const drawingMode = activeTool.value === 'draw'
+    const placingTextbox = activeTool.value === 'textbox'
     const annotationId = object.annotationId
     const lockedByOther = typeof annotationId === 'number' && isAnnotationLockedByOther(annotationId)
 
@@ -405,8 +476,8 @@ export function usePdfAnnotationOverlay({
     }
 
     object.set({
-      selectable: !drawingMode && !lockedByOther,
-      evented: !drawingMode && !lockedByOther,
+      selectable: !drawingMode && !placingTextbox && !lockedByOther,
+      evented: !drawingMode && !placingTextbox && !lockedByOther,
     })
 
     if (isTextboxObject(object)) {
@@ -578,6 +649,17 @@ export function usePdfAnnotationOverlay({
 
     const annotations = listPageAnnotations(page)
     const nextIDs = new Set(annotations.map((annotation) => annotation.id))
+
+    // Remove any pending objects that haven't received a server ID yet —
+    // they don't belong to the new page and aren't tracked in renderedObjects.
+    withSuppressedRemoveEvents(() => {
+      for (const object of fabricCanvas!.getObjects()) {
+        const obj = object as FabricAnnotationObject
+        if (obj.pendingCreate) {
+          fabricCanvas!.remove(object)
+        }
+      }
+    })
 
     for (const [annotationID, object] of Array.from(renderedObjects.entries())) {
       if (!nextIDs.has(annotationID)) {
@@ -758,13 +840,19 @@ export function usePdfAnnotationOverlay({
     if (!fabricCanvas) return
 
     const drawingMode = tool === 'draw'
+    const placingTextbox = tool === 'textbox'
     fabricCanvas.isDrawingMode = drawingMode
-    fabricCanvas.selection = !drawingMode
-    fabricCanvas.skipTargetFind = drawingMode
+    fabricCanvas.selection = !drawingMode && !placingTextbox
+    fabricCanvas.skipTargetFind = drawingMode || placingTextbox
 
-    if (drawingMode) {
+    if (drawingMode || placingTextbox) {
       fabricCanvas.discardActiveObject()
       selectedAnnotationId.value = null
+    }
+
+    const upperCanvasEl = (fabricCanvas as unknown as { upperCanvasEl?: HTMLCanvasElement }).upperCanvasEl
+    if (upperCanvasEl) {
+      upperCanvasEl.style.cursor = placingTextbox ? 'crosshair' : ''
     }
 
     for (const object of renderedObjects.values()) {
@@ -807,14 +895,19 @@ export function usePdfAnnotationOverlay({
     syncStyleControls()
   }
 
-  async function addTextbox() {
+  function addTextbox() {
+    if (!fabricCanvas || collabStatus.value !== 'connected') return
+    setActiveTool('textbox')
+  }
+
+  function placeTextboxAt(left: number, top: number) {
     if (!fabricCanvas || collabStatus.value !== 'connected') return
     if (!syncOverlaySize()) return
 
     const { width, height } = getOverlaySize()
     const textbox = new Textbox('Text', {
-      left: width * 0.16,
-      top: height * 0.14,
+      left,
+      top,
       width: width * 0.3,
       fontSize: Math.max(12, height * textboxDefaultFontSize),
       fill: textboxDefaultFill,
@@ -839,8 +932,8 @@ export function usePdfAnnotationOverlay({
       id: 0,
       page: currentPage.value,
       text: 'Text',
-      positionX: 0.16,
-      positionY: 0.14,
+      positionX: left / width,
+      positionY: top / height,
       width: 0.3,
       fontSize: textboxDefaultFontSize,
       fill: textboxDefaultFill,
@@ -865,6 +958,27 @@ export function usePdfAnnotationOverlay({
     }
 
     updateAnnotation(toCollabAnnotation(annotation))
+  }
+
+  function flushTextboxDebounce() {
+    if (textboxDebounceTimer !== null) {
+      clearTimeout(textboxDebounceTimer)
+      textboxDebounceTimer = null
+    }
+    if (pendingTextboxPersist) {
+      pendingTextboxPersist()
+      pendingTextboxPersist = null
+    }
+  }
+
+  function debouncePersistTextbox(object: FabricTextboxWithId) {
+    pendingTextboxPersist = () => persistTextbox(object)
+    if (textboxDebounceTimer !== null) clearTimeout(textboxDebounceTimer)
+    textboxDebounceTimer = setTimeout(() => {
+      textboxDebounceTimer = null
+      pendingTextboxPersist?.()
+      pendingTextboxPersist = null
+    }, 1000)
   }
 
   function persistCanvasObject(object: FabricPathWithId, mode: 'update' | 'move' = 'update') {
@@ -1101,6 +1215,8 @@ export function usePdfAnnotationOverlay({
             const pendingTextbox = findPendingTextbox()
             if (pendingTextbox) {
               applyAnnotationToTextbox(pendingTextbox, annotation)
+              renderedObjects.set(annotation.id, pendingTextbox)
+              annotationCount.value = fabricCanvas?.getObjects().length ?? annotationCount.value
               fabricCanvas?.requestRenderAll()
               syncLockOverlays()
               syncSelectionState()
@@ -1251,6 +1367,12 @@ export function usePdfAnnotationOverlay({
       upperCanvasEl.style.zIndex = '21'
     }
 
+    fabricCanvas.on('mouse:down', (event) => {
+      if (activeTool.value !== 'textbox') return
+      const pointer = fabricCanvas!.getScenePoint(event.e)
+      placeTextboxAt(pointer.x, pointer.y)
+    })
+
     fabricCanvas.on('object:modified', (event) => {
       if (!event.target) return
 
@@ -1298,7 +1420,7 @@ export function usePdfAnnotationOverlay({
     })
     fabricCanvas.on('text:changed', (event) => {
       if (!event.target || !isTextboxObject(event.target)) return
-      persistTextbox(event.target)
+      debouncePersistTextbox(event.target)
     })
     fabricCanvas.on('path:created', (event) => {
       if (!event.path || !isPathObject(event.path) || collabStatus.value !== 'connected') {
@@ -1319,8 +1441,8 @@ export function usePdfAnnotationOverlay({
       createAnnotation(toCollabAnnotation(serializeCanvasPath(event.path, width, height)))
     })
     fabricCanvas.on('selection:created', syncSelectionState)
-    fabricCanvas.on('selection:updated', syncSelectionState)
-    fabricCanvas.on('selection:cleared', syncSelectionState)
+    fabricCanvas.on('selection:updated', () => { flushTextboxDebounce(); syncSelectionState() })
+    fabricCanvas.on('selection:cleared', () => { flushTextboxDebounce(); syncSelectionState() })
 
     overlayReady.value = true
     setActiveTool('select')
@@ -1362,6 +1484,7 @@ export function usePdfAnnotationOverlay({
   })
 
   watch(currentPage, (page) => {
+    flushTextboxDebounce()
     if (activeSelectionLockId !== null) {
       releaseSelectionLock(activeSelectionLockId)
     }
@@ -1401,6 +1524,7 @@ export function usePdfAnnotationOverlay({
   })
 
   onBeforeUnmount(() => {
+    flushTextboxDebounce()
     if (resizeFrame) cancelAnimationFrame(resizeFrame)
     resizeObserver?.disconnect()
     resizeObserver = null
