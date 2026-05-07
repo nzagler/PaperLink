@@ -22,16 +22,7 @@ import (
 
 var log = util.GroupLog("SERVER")
 
-func isBrotliCompressedAsset(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".html", ".css", ".js":
-		return true
-	default:
-		return false
-	}
-}
-
-func isFrontendFile(path string) bool {
+func isCompressibleAsset(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".html", ".css", ".js":
 		return true
@@ -48,12 +39,30 @@ func clientAcceptsBrotli(c *gin.Context) bool {
 	return strings.Contains(c.GetHeader("Accept-Encoding"), "br")
 }
 
-func serveFile(c *gin.Context, path string, allowBrotli bool) {
-	if allowBrotli && clientAcceptsBrotli(c) {
-		c.Header("Content-Encoding", "br")
-		c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(path)))
-		c.File(path)
-		return
+func clientAcceptsGzip(c *gin.Context) bool {
+	return strings.Contains(c.GetHeader("Accept-Encoding"), "gzip")
+}
+
+func serveFile(c *gin.Context, path string, allowCompressed bool) {
+	c.Header("Vary", "Accept-Encoding")
+
+	if allowCompressed {
+		if clientAcceptsBrotli(c) {
+			if _, err := os.Stat(path + ".br"); err == nil {
+				c.Header("Content-Encoding", "br")
+				c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(path)))
+				c.File(path + ".br")
+				return
+			}
+		}
+		if clientAcceptsGzip(c) {
+			if _, err := os.Stat(path + ".gz"); err == nil {
+				c.Header("Content-Encoding", "gzip")
+				c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(path)))
+				c.File(path + ".gz")
+				return
+			}
+		}
 	}
 
 	c.Writer.Header().Del("Content-Encoding")
@@ -66,7 +75,7 @@ func Start() {
 	r.GET("/assets/*filepath", func(c *gin.Context) {
 		path := "./dist/assets" + c.Param("filepath")
 
-		serveFile(c, path, isBrotliCompressedAsset(path))
+		serveFile(c, path, isCompressibleAsset(path))
 	})
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
@@ -78,7 +87,7 @@ func Start() {
 		if filepath.Ext(requestPath) != "" {
 			path := frontendFilePath(requestPath)
 			if _, err := os.Stat(path); err == nil {
-				serveFile(c, path, isFrontendFile(path))
+				serveFile(c, path, isCompressibleAsset(path))
 				return
 			}
 

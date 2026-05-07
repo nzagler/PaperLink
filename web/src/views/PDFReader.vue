@@ -125,7 +125,24 @@
             {{ readerError }}
           </div>
 
-          <div v-else class="flex min-h-full w-full justify-center p-4 md:p-6">
+          <div v-else class="relative flex min-h-full w-full justify-center p-4 md:p-6">
+            <Transition
+              enter-active-class="transition-opacity duration-150"
+              leave-active-class="transition-opacity duration-150"
+              enter-from-class="opacity-0"
+              leave-to-class="opacity-0"
+            >
+              <div
+                v-if="activeTool === 'textbox'"
+                class="pointer-events-none absolute inset-x-0 top-6 z-30 flex justify-center"
+              >
+                <div class="flex items-center gap-2 rounded-full border border-neutral-300 bg-white/90 px-4 py-1.5 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur-sm dark:border-neutral-600 dark:bg-neutral-900/90 dark:text-neutral-200">
+                  <Type class="h-3.5 w-3.5 shrink-0" />
+                  Click on the page to place · <kbd class="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-mono dark:bg-neutral-800">Esc</kbd> to cancel
+                </div>
+              </div>
+            </Transition>
+
             <div class="relative inline-block max-w-full">
               <canvas
                 ref="canvasEl"
@@ -152,8 +169,8 @@
             <div class="grid grid-cols-3 gap-2">
               <Button
                 variant="outline"
-                class="h-auto flex-col gap-1.5 px-3 py-3"
-                :class="activeTool === 'select' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                class="h-auto flex-col gap-1.5 px-3 py-3 transition-colors"
+                :class="activeTool === 'select' ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900' : ''"
                 :disabled="!overlayReady || collabStatus !== 'connected'"
                 @click="setActiveTool('select')"
               >
@@ -162,8 +179,8 @@
               </Button>
               <Button
                 variant="outline"
-                class="h-auto flex-col gap-1.5 px-3 py-3"
-                :class="activeTool === 'textbox' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                class="h-auto flex-col gap-1.5 px-3 py-3 transition-colors"
+                :class="activeTool === 'textbox' ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900' : ''"
                 :disabled="!overlayReady || collabStatus !== 'connected'"
                 @click="setActiveTool('textbox')"
               >
@@ -172,8 +189,8 @@
               </Button>
               <Button
                 variant="outline"
-                class="h-auto flex-col gap-1.5 px-3 py-3"
-                :class="activeTool === 'draw' ? 'border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100' : ''"
+                class="h-auto flex-col gap-1.5 px-3 py-3 transition-colors"
+                :class="activeTool === 'draw' ? 'border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900' : ''"
                 :disabled="!overlayReady || collabStatus !== 'connected'"
                 @click="setActiveTool('draw')"
               >
@@ -285,8 +302,15 @@
                     Text Box
                   </div>
                   <div class="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
-                    Configure the next textbox, then place it on the page.
+                    Set the style below, then click anywhere on the PDF to place.
                   </div>
+                </div>
+                <div class="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800/60 dark:text-neutral-300">
+                  <span class="relative flex h-2 w-2 shrink-0">
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-neutral-400 opacity-75 dark:bg-neutral-500" />
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-neutral-500 dark:bg-neutral-400" />
+                  </span>
+                  Waiting for click on page…
                 </div>
                 <div class="space-y-2">
                   <div class="text-xs text-neutral-600 dark:text-neutral-300">Font color</div>
@@ -311,12 +335,11 @@
                   />
                 </div>
                 <Button
+                  variant="outline"
                   class="w-full justify-start"
-                  :disabled="!overlayReady || collabStatus !== 'connected'"
-                  @click="addTextbox"
+                  @click="setActiveTool('select')"
                 >
-                  <Type class="h-4 w-4" />
-                  Place text box
+                  Cancel
                 </Button>
               </template>
 
@@ -366,7 +389,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePdfAnnotationOverlay } from '@/composables/usePdfAnnotationOverlay'
 import { usePdfReader } from '@/composables/usePdfReader'
 import { Badge } from '@/components/ui/badge'
@@ -440,6 +463,15 @@ const {
 })
 
 const pageInput = ref('1')
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && activeTool.value === 'textbox') {
+    setActiveTool('select')
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 const isFirstPage = computed(() => currentPage.value <= 1)
 const isLastPage = computed(() => pageCount.value === 0 || currentPage.value >= pageCount.value)
