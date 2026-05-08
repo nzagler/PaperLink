@@ -38,11 +38,14 @@ func Refresh(c *gin.Context) {
 		return
 	}
 
-	access, err := util.RefreshAccessToken(refreshToken)
+	// Re-issue tokens from current DB user state so claim data (e.g. username)
+	// stays in sync after profile changes.
+	access, refresh, err := util.GenerateJWT(user.ID, user.Username)
 	if err != nil {
 		routes.JSONError(c, http.StatusUnauthorized, "invalid refresh token")
 		return
 	}
+	setRefreshCookie(c, refresh)
 	routes.JSONSuccess(c, http.StatusOK, LoginResponse{
 		AccessToken: access,
 	})

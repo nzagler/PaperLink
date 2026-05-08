@@ -1,27 +1,30 @@
 import { setCurrentUser } from "@/auth/user"
 import { apiFetch } from "@/auth/api"
 
-/**
- * Frontend-only stubs for account settings.
- *
- * When the backend is ready, replace the bodies with apiFetch calls, e.g.
- *   PATCH /api/v1/auth/username  { username }
- *   PATCH /api/v1/auth/password  { oldPassword, newPassword }
- */
-
 export async function changeUsername(username: string): Promise<void> {
-  // Simulate latency
-  await new Promise((r) => setTimeout(r, 350))
-
-  // TODO (backend): validate uniqueness, enforce rules, return updated username
-  setCurrentUser({ username })
+  const res = await apiFetch("/api/v1/auth/username", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  })
+  const body = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(body?.error || body?.message || "Failed to change username")
+  }
+  const updatedUsername = body?.data?.username ?? username
+  setCurrentUser({ username: updatedUsername })
 }
 
-export async function changePassword(_oldPassword: string, _newPassword: string): Promise<void> {
-  // Simulate latency
-  await new Promise((r) => setTimeout(r, 350))
-
-  // TODO (backend): verify old password, update hash, return ok
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const res = await apiFetch("/api/v1/auth/password", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oldPassword, newPassword }),
+  })
+  const body = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(body?.error || body?.message || "Failed to change password")
+  }
 }
 
 export type OidcConfig = {
