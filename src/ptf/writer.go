@@ -3,15 +3,17 @@ package ptf
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"io"
 	"os"
 	"os/exec"
+	"paperlink/pvf"
 	"paperlink/util"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/pdfcpu/pdfcpu/pkg/api"
 )
 
 var log = util.GroupLog("PTF")
@@ -60,6 +62,124 @@ func WriteThumbnailPTFFromPDF(inputFile string) (string, error) {
 
 	outputFilePath := fmt.Sprintf("%s/output_thumb.ptf", tempDir)
 	if err := writePTFByPagePaths(pagePaths, outputFilePath); err != nil {
+		return "", err
+	}
+	return outputFilePath, nil
+}
+
+func WriteThumbnailPTFFromPVF(inputFile string) (string, error) {
+	metadata, err := pvf.ReadMetadata(inputFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read pvf metadata: %w", err)
+	}
+	if metadata.PageCount == 0 {
+		return "", fmt.Errorf("pvf has no pages")
+	}
+
+	tempDir, err := os.MkdirTemp(os.TempDir(), "pvf_thumb_*")
+	if err != nil {
+		return "", fmt.Errorf("could not create temporary directory: %w", err)
+	}
+
+	pageCount := int(metadata.PageCount)
+
+	pagePDFPaths := make([]string, pageCount)
+	pvfFile, err := os.Open(inputFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to open pvf file: %w", err)
+	}
+	for i := 0; i < pageCount; i++ {
+		idx := metadata.Indexes[i]
+		data := make([]byte, idx.Size)
+		n, readErr := pvfFile.ReadAt(data, int64(idx.Offset))
+		if readErr != nil || n != int(idx.Size) {
+			_ = pvfFile.Close()
+			return "", fmt.Errorf("failed to read pvf page %d: %w", i+1, readErr)
+		}
+		pagePath := filepath.Join(tempDir, fmt.Sprintf("page_%05d.pdf", i+1))
+		if writeErr := os.WriteFile(pagePath, data, 0o644); writeErr != nil {
+			_ = pvfFile.Close()
+			return "", fmt.Errorf("failed to write temp pdf for page %d: %w", i+1, writeErr)
+		}
+		pagePDFPaths[i] = pagePath
+	}
+	_ = pvfFile.Close()
+
+	type pvfThumbJob struct {
+		pageNum   int
+		pdfPath   string
+		thumbPath string
+	}
+
+	jobs := make([]pvfThumbJob, pageCount)
+	for i, pdfPath := range pagePDFPaths {
+		jobs[i] = pvfThumbJob{
+			pageNum:   i + 1,
+			pdfPath:   pdfPath,
+			thumbPath: filepath.Join(tempDir, fmt.Sprintf("thumb_%05d.png", i+1)),
+		}
+	}
+
+	workerCount := thumbnailWorkerCount
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	if workerCount > pageCount {
+		workerCount = pageCount
+	}
+
+	jobCh := make(chan pvfThumbJob, pageCount)
+	for _, j := range jobs {
+		jobCh <- j
+	}
+	close(jobCh)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workerCount)
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobCh {
+				cmd := exec.Command(
+					"gs",
+					"-sDEVICE=pnggray",
+					"-r100",
+					"-dDownScaleFactor=4",
+					"-dTextAlphaBits=4",
+					"-dGraphicsAlphaBits=4",
+					"-dBATCH",
+					"-dNOPAUSE",
+					"-sOutputFile="+j.thumbPath,
+					j.pdfPath,
+				)
+				if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
+					errCh <- fmt.Errorf("ghostscript failed for pvf page %d: %w: %s", j.pageNum, cmdErr, strings.TrimSpace(string(out)))
+					return
+				}
+				_ = os.Remove(j.pdfPath)
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return "", err
+		}
+	}
+
+	thumbPaths := make([]string, pageCount)
+	for i, j := range jobs {
+		thumbPaths[i] = j.thumbPath
+	}
+	if len(thumbPaths) != pageCount {
+		return "", fmt.Errorf("thumbnail page count mismatch: expected=%d got=%d", pageCount, len(thumbPaths))
+	}
+
+	outputFilePath := filepath.Join(tempDir, "output_thumb.ptf")
+	if err := writePTFByPagePaths(thumbPaths, outputFilePath); err != nil {
 		return "", err
 	}
 	return outputFilePath, nil

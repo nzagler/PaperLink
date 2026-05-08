@@ -23,7 +23,7 @@ var (
 	ErrAnnotationLockOwned    = errors.New("annotation lock owned by another client")
 )
 
-type annotationMessage struct {
+type AnnotationMessage struct {
 	ID        int                   `json:"id"`
 	Type      entity.AnnotationType `json:"type"`
 	Data      string                `json:"data"`
@@ -35,8 +35,8 @@ type annotationMessage struct {
 }
 
 type annotationActionPayload struct {
-	Previous *annotationMessage `json:"previous,omitempty"`
-	Current  *annotationMessage `json:"current,omitempty"`
+	Previous *AnnotationMessage `json:"previous,omitempty"`
+	Current  *AnnotationMessage `json:"current,omitempty"`
 }
 
 type annotationLockState struct {
@@ -158,7 +158,7 @@ func (s *AnnotationStore) MarkRoomInactive(documentUUID string) {
 	}
 }
 
-func (s *AnnotationStore) GetPageAnnotations(documentUUID string, page int64) ([]annotationMessage, error) {
+func (s *AnnotationStore) GetPageAnnotations(documentUUID string, page int64) ([]AnnotationMessage, error) {
 	if page <= 0 {
 		return nil, ErrInvalidAnnotation
 	}
@@ -173,7 +173,7 @@ func (s *AnnotationStore) GetPageAnnotations(documentUUID string, page int64) ([
 
 	state.LastTouchedAt = time.Now()
 
-	result := make([]annotationMessage, 0)
+	result := make([]AnnotationMessage, 0)
 	for _, annotation := range state.Annotations {
 		if annotation.Page != page {
 			continue
@@ -197,7 +197,7 @@ func (s *AnnotationStore) GetDocumentLocks(documentUUID string) ([]annotationLoc
 	return listAnnotationLocks(state), nil
 }
 
-func (s *AnnotationStore) CreateAnnotation(documentUUID string, input annotationMessage) (*annotationMessage, error) {
+func (s *AnnotationStore) CreateAnnotation(documentUUID string, input AnnotationMessage) (*AnnotationMessage, error) {
 	if err := validateAnnotationInput(input, true); err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (s *AnnotationStore) CreateAnnotation(documentUUID string, input annotation
 	return &result, nil
 }
 
-func (s *AnnotationStore) UpdateAnnotation(documentUUID, ownerClientID string, input annotationMessage) (*annotationMessage, error) {
+func (s *AnnotationStore) UpdateAnnotation(documentUUID, ownerClientID string, input AnnotationMessage) (*AnnotationMessage, error) {
 	if input.ID == 0 {
 		return nil, ErrInvalidAnnotation
 	}
@@ -278,7 +278,7 @@ func (s *AnnotationStore) UpdateAnnotation(documentUUID, ownerClientID string, i
 	return &result, nil
 }
 
-func (s *AnnotationStore) MoveAnnotation(documentUUID, ownerClientID string, input annotationMessage) (*annotationMessage, error) {
+func (s *AnnotationStore) MoveAnnotation(documentUUID, ownerClientID string, input AnnotationMessage) (*AnnotationMessage, error) {
 	if input.ID == 0 || input.Page <= 0 {
 		return nil, ErrInvalidAnnotation
 	}
@@ -554,7 +554,7 @@ func (s *AnnotationStore) recordActionLocked(state *documentAnnotationState, act
 	})
 }
 
-func validateAnnotationInput(input annotationMessage, isCreate bool) error {
+func validateAnnotationInput(input AnnotationMessage, isCreate bool) error {
 	if input.Page <= 0 {
 		return fmt.Errorf("%w: page must be positive", ErrInvalidAnnotation)
 	}
@@ -583,7 +583,7 @@ func ensureAnnotationLockHeldLocked(state *documentAnnotationState, annotationID
 	return nil
 }
 
-func toAnnotationMessagePtr(annotation *entity.Annotation) *annotationMessage {
+func toAnnotationMessagePtr(annotation *entity.Annotation) *AnnotationMessage {
 	if annotation == nil {
 		return nil
 	}
@@ -591,8 +591,8 @@ func toAnnotationMessagePtr(annotation *entity.Annotation) *annotationMessage {
 	return &message
 }
 
-func toAnnotationMessage(annotation *entity.Annotation) annotationMessage {
-	return annotationMessage{
+func toAnnotationMessage(annotation *entity.Annotation) AnnotationMessage {
+	return AnnotationMessage{
 		ID:        annotation.ID,
 		Type:      annotation.Type,
 		Data:      annotation.Data,
