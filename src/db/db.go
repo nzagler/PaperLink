@@ -78,6 +78,11 @@ func ensureSQLiteColumns(instance *gorm.DB) error {
 		"annotation_actions": {
 			"action": "ALTER TABLE annotation_actions ADD COLUMN action TEXT DEFAULT 'UPDATE'",
 		},
+		"document_users": {
+			"status":     "ALTER TABLE document_users ADD COLUMN status TEXT NOT NULL DEFAULT 'ACCEPTED'",
+			"created_at": "ALTER TABLE document_users ADD COLUMN created_at datetime",
+			"updated_at": "ALTER TABLE document_users ADD COLUMN updated_at datetime",
+		},
 	}
 
 	for tableName, tableColumns := range requiredColumns {
@@ -94,6 +99,10 @@ func ensureSQLiteColumns(instance *gorm.DB) error {
 				return err
 			}
 		}
+	}
+
+	if err := instance.Exec("UPDATE document_users SET status = 'ACCEPTED' WHERE status IS NULL OR status = ''").Error; err != nil {
+		return err
 	}
 
 	if err := rebuildAnnotationActionsTableWithoutForeignKey(instance); err != nil {

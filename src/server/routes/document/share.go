@@ -18,9 +18,19 @@ type ShareRequest struct {
 }
 
 type ShareResponse struct {
-	UserID   int                     `json:"userId"`
-	Username string                  `json:"username"`
-	Role     entity.DocumentUserRole `json:"role"`
+	UserID   int                       `json:"userId"`
+	Username string                    `json:"username"`
+	Role     entity.DocumentUserRole   `json:"role"`
+	Status   entity.DocumentUserStatus `json:"status"`
+}
+
+type DocumentInviteResponse struct {
+	DocumentID   int                     `json:"documentId"`
+	DocumentUUID string                  `json:"documentUuid"`
+	DocumentName string                  `json:"documentName"`
+	Owner        string                  `json:"owner"`
+	Role         entity.DocumentUserRole `json:"role"`
+	UpdatedAt    string                  `json:"updatedAt"`
 }
 
 func Share(c *gin.Context) {
@@ -72,10 +82,10 @@ func Share(c *gin.Context) {
 		return
 	}
 
-	share, err := repo.DocumentUser.UpsertShare(doc.ID, target.ID, req.Role)
+	share, err := repo.DocumentUser.UpsertInvite(doc.ID, target.ID, req.Role)
 	if err != nil {
-		log.Errorf("failed to share document %s with user %d: %v", uuid, target.ID, err)
-		routes.JSONError(c, http.StatusInternalServerError, "failed to share document")
+		log.Errorf("failed to invite user %d to document %s: %v", target.ID, uuid, err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to invite user")
 		return
 	}
 
@@ -83,6 +93,7 @@ func Share(c *gin.Context) {
 		UserID:   share.UserID,
 		Username: share.User.Username,
 		Role:     share.Role,
+		Status:   share.Status,
 	})
 }
 
@@ -113,10 +124,73 @@ func ListShares(c *gin.Context) {
 			UserID:   share.UserID,
 			Username: share.User.Username,
 			Role:     share.Role,
+			Status:   share.Status,
 		})
 	}
 
 	routes.JSONSuccessOK(c, out)
+}
+
+func ListInvites(c *gin.Context) {
+	userID := c.GetInt("userId")
+
+	invites, err := repo.DocumentUser.GetPendingInvitesByUserID(userID)
+	if err != nil {
+		log.Errorf("failed to list document invites for user %d: %v", userID, err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to list invites")
+		return
+	}
+
+	out := make([]DocumentInviteResponse, 0, len(invites))
+	for _, invite := range invites {
+		out = append(out, DocumentInviteResponse{
+			DocumentID:   invite.DocumentID,
+			DocumentUUID: invite.Document.UUID,
+			DocumentName: invite.Document.Name,
+			Owner:        invite.Document.User.Username,
+			Role:         invite.Role,
+			UpdatedAt:    invite.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	routes.JSONSuccessOK(c, out)
+}
+
+func AcceptInvite(c *gin.Context) {
+	updateInvite(c, entity.DocumentInviteAccepted)
+}
+
+func DeclineInvite(c *gin.Context) {
+	updateInvite(c, entity.DocumentInviteDeclined)
+}
+
+func updateInvite(c *gin.Context, status entity.DocumentUserStatus) {
+	uuid := c.Param("id")
+	userID := c.GetInt("userId")
+
+	doc := repo.Document.GetByUUIDWithFile(uuid)
+	if doc == nil {
+		routes.JSONError(c, http.StatusNotFound, "document not found")
+		return
+	}
+	if doc.UserID == userID {
+		routes.JSONError(c, http.StatusBadRequest, "owner cannot respond to own invite")
+		return
+	}
+
+	invite, err := repo.DocumentUser.GetInvite(doc.ID, userID)
+	if err != nil || invite == nil || invite.Status != entity.DocumentInvitePending {
+		routes.JSONError(c, http.StatusNotFound, "pending invite not found")
+		return
+	}
+
+	if err := repo.DocumentUser.UpdateInviteStatus(doc.ID, userID, status); err != nil {
+		log.Errorf("failed to update invite for document %s and user %d: %v", uuid, userID, err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to update invite")
+		return
+	}
+
+	routes.JSONSuccessOK(c, gin.H{"message": "ok"})
 }
 
 func Unshare(c *gin.Context) {

@@ -16,6 +16,7 @@ import { checkIsAdmin } from '@/lib/admin'
 import TaskView from '@/views/TaskView.vue'
 import TasksList from '@/views/TasksList.vue'
 import UserSettings from '@/views/UserSettings.vue'
+import Invites from '@/views/Invites.vue'
 import type { RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
@@ -35,6 +36,12 @@ const routes: RouteRecordRaw[] = [
     path: '/settings',
     name: 'Settings',
     component: UserSettings,
+    meta: { requiresAuth: true, hideSidebar: false, forceSidebarClosed: false },
+  },
+  {
+    path: '/invites',
+    name: 'Invites',
+    component: Invites,
     meta: { requiresAuth: true, hideSidebar: false, forceSidebarClosed: false },
   },
   {

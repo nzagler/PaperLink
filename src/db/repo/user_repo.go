@@ -42,6 +42,23 @@ func (n *UserRepo) GetUserByNameOrNil(name string) (*entity.User, error) {
 	return user, err
 }
 
+func (n *UserRepo) SearchUsers(query string, excludeUserID int, limit int) ([]entity.User, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 10
+	}
+
+	var users []entity.User
+	q := n.db.
+		Where("id <> ?", excludeUserID).
+		Order("username ASC").
+		Limit(limit)
+	if query != "" {
+		q = q.Where("username LIKE ?", "%"+query+"%")
+	}
+	err := q.Find(&users).Error
+	return users, err
+}
+
 func (r *DocumentRepo) GetOwnedDocuments(userId int) ([]entity.Document, error) {
 	var documents []entity.Document
 	err := r.db.Where("UserID = ?", userId).Find(&documents).Error

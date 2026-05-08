@@ -61,7 +61,9 @@ type ApiFileNode = {
 }
 type ApiDirNode = { id: number; name: string; files: ApiFileNode[]; directories: ApiDirNode[] }
 type ShareRole = 'VIEWER' | 'EDITOR'
-type DocumentShare = { userId: number; username: string; role: ShareRole }
+type ShareStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED'
+type DocumentShare = { userId: number; username: string; role: ShareRole; status: ShareStatus }
+type UserSuggestion = { id: number; username: string }
 const router = useRouter()
 function mapDirNodeToItems(node: ApiDirNode): Item[] {
   const dirs: Item[] = (node.directories ?? []).map(d => ({
@@ -358,8 +360,10 @@ const shareTarget = ref<Item | null>(null)
 const shareUsername = ref('')
 const shareRole = ref<ShareRole>('VIEWER')
 const shares = ref<DocumentShare[]>([])
+const userSuggestions = ref<UserSuggestion[]>([])
 const shareLoading = ref(false)
 const shareError = ref<string | null>(null)
+let shareUserSearchTimer: ReturnType<typeof setTimeout> | null = null
 
 function normalizeTagNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
@@ -468,8 +472,13 @@ function resetShareState() {
   shareUsername.value = ''
   shareRole.value = 'VIEWER'
   shares.value = []
+  userSuggestions.value = []
   shareLoading.value = false
   shareError.value = null
+  if (shareUserSearchTimer) {
+    clearTimeout(shareUserSearchTimer)
+    shareUserSearchTimer = null
+  }
 }
 
 function onShareDialogChange(val: boolean) {
@@ -561,6 +570,28 @@ function startShareDocument(item: Item) {
   shareDialogOpen.value = true
   closeContextMenu()
   void loadShares(item.id)
+  void loadUserSuggestions('')
+}
+
+function queueUserSuggestions() {
+  if (shareUserSearchTimer) clearTimeout(shareUserSearchTimer)
+  shareUserSearchTimer = setTimeout(() => {
+    void loadUserSuggestions(shareUsername.value)
+  }, 180)
+}
+
+async function loadUserSuggestions(query: string) {
+  try {
+    const params = new URLSearchParams()
+    params.set('limit', '8')
+    if (query.trim()) params.set('q', query.trim())
+    const res = await apiFetch(`/api/v1/document/share/users?${params.toString()}`)
+    const json = await res.json().catch(() => null)
+    if (!res.ok) return
+    userSuggestions.value = Array.isArray(json?.data) ? json.data : []
+  } catch {
+    userSuggestions.value = []
+  }
 }
 
 async function loadShares(uuid: string) {
@@ -594,7 +625,7 @@ async function submitShareDocument() {
     })
     const json = await res.json().catch(() => null)
     if (!res.ok) {
-      throw new Error(json?.error || 'Failed to share document.')
+      throw new Error(json?.error || 'Failed to send invite.')
     }
     if (json?.data) {
       const next = json.data as DocumentShare
@@ -603,7 +634,7 @@ async function submitShareDocument() {
     shareUsername.value = ''
     shareRole.value = 'VIEWER'
   } catch (err) {
-    shareError.value = err instanceof Error ? err.message : 'Failed to share document.'
+    shareError.value = err instanceof Error ? err.message : 'Failed to send invite.'
   } finally {
     shareLoading.value = false
   }
@@ -1126,12 +1157,22 @@ defineExpose({
         <DialogHeader>
           <DialogTitle>Share document</DialogTitle>
           <DialogDescription>
-            Add an existing user and choose whether they can view or edit the document.
+            Invite an existing user and choose whether they can view or edit the document.
           </DialogDescription>
         </DialogHeader>
         <form class="space-y-4" @submit.prevent="submitShareDocument">
           <div class="grid gap-2 sm:grid-cols-[1fr,130px]">
-            <Input v-model="shareUsername" placeholder="Username" :disabled="shareLoading" />
+            <Input
+                v-model="shareUsername"
+                placeholder="Search username"
+                list="document-share-users"
+                autocomplete="off"
+                :disabled="shareLoading"
+                @input="queueUserSuggestions"
+            />
+            <datalist id="document-share-users">
+              <option v-for="user in userSuggestions" :key="user.id" :value="user.username" />
+            </datalist>
             <select
                 v-model="shareRole"
                 class="h-10 rounded-md border border-neutral-300 bg-white px-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
@@ -1145,20 +1186,20 @@ defineExpose({
             {{ shareError }}
           </p>
           <div class="space-y-2">
-            <p class="text-xs font-medium text-neutral-500 dark:text-neutral-400">Current shares</p>
+            <p class="text-xs font-medium text-neutral-500 dark:text-neutral-400">Current invites and shares</p>
             <div v-if="shares.length" class="space-y-2">
               <div
                   v-for="share in shares"
                   :key="share.userId"
                   class="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
               >
-                <span>{{ share.username }} · {{ share.role }}</span>
+                <span>{{ share.username }} · {{ share.role }} · {{ share.status }}</span>
                 <Button type="button" variant="ghost" size="icon" class="h-7 w-7" :disabled="shareLoading" @click="removeShare(share)">
                   <X class="h-4 w-4" />
                 </Button>
               </div>
             </div>
-            <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">No users have access yet.</p>
+            <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">No invites or shares yet.</p>
           </div>
           <DialogFooter class="pt-2">
             <Button type="button" variant="outline" :disabled="shareLoading" @click="shareDialogOpen = false">
@@ -1166,7 +1207,7 @@ defineExpose({
             </Button>
             <Button type="submit" :disabled="shareLoading">
               <Loader2 v-if="shareLoading" class="mr-2 h-4 w-4 animate-spin" />
-              Share
+              Send invite
             </Button>
           </DialogFooter>
         </form>

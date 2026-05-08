@@ -36,7 +36,7 @@ func (r *DocumentRepo) GetSharedByUserIdWithFile(userId int) ([]entity.Document,
 		Preload("File").
 		Preload("User").
 		Joins("JOIN document_users du ON du.document_id = documents.id").
-		Where("du.user_id = ? AND documents.user_id <> ?", userId, userId).
+		Where("du.user_id = ? AND du.status = ? AND documents.user_id <> ?", userId, entity.DocumentInviteAccepted, userId).
 		Find(&result).Error
 	return result, err
 }
@@ -85,7 +85,7 @@ func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entit
 		Preload("Tags").
 		Preload("File").
 		Preload("User").
-		Joins("LEFT JOIN document_users du ON du.document_id = documents.id AND du.user_id = ?", userID).
+		Joins("LEFT JOIN document_users du ON du.document_id = documents.id AND du.user_id = ? AND du.status = ?", userID, entity.DocumentInviteAccepted).
 		Where("(documents.user_id = ? OR du.user_id = ?)", userID, userID)
 
 	if search != "" {
