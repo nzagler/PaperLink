@@ -8,9 +8,9 @@ const (
 )
 
 type DocumentUser struct {
-	UserID     int      `gorm:"primaryKey"`
-	DocumentID int      `gorm:"primaryKey"`
-	User       User     `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
-	Document   Document `gorm:"foreignKey:DocumentID;constraint:OnDelete:CASCADE"`
-	Role       DocumentUserRole
+	UserID     int              `gorm:"primaryKey" json:"userId"`
+	DocumentID int              `gorm:"primaryKey" json:"documentId"`
+	User       User             `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
+	Document   Document         `gorm:"foreignKey:DocumentID;constraint:OnDelete:CASCADE" json:"document"`
+	Role       DocumentUserRole `gorm:"not null" json:"role"`
 }

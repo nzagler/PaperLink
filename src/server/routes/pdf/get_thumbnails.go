@@ -64,7 +64,7 @@ func GetThumbnailsRange(c *gin.Context) {
 		return
 	}
 
-	if doc.UserID != userID {
+	if doc.UserID != userID && !repo.DocumentUser.HasAccess(doc.ID, userID) {
 		c.String(http.StatusForbidden, "forbidden")
 		return
 	}

@@ -18,4 +18,7 @@ func InitDocumentRouter(r *gin.Engine) {
 	group.POST("/upload", Upload)
 	group.GET("/get/:id", Get)
 	group.DELETE("/delete/:id", Delete)
+	group.GET("/:id/shares", ListShares)
+	group.POST("/:id/share", Share)
+	group.DELETE("/:id/share/:userId", Unshare)
 }

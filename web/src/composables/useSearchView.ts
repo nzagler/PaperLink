@@ -59,8 +59,8 @@ export function useSearchView() {
         pages: 0,
         size: formatBytes(it.sizeBytes),
         updatedAt: '',
-        owner: 'You',
-        shared: false,
+        owner: it.owner,
+        shared: it.shared,
         path: it.path,
       }))
     } catch (e: any) {
@@ -100,6 +100,8 @@ export function useSearchView() {
 
     if (selectedScope.value === 'shared') {
       list = list.filter((item) => item.shared)
+    } else if (selectedScope.value === 'mine') {
+      list = list.filter((item) => !item.shared)
     }
 
     if (selectedTags.value.length) {

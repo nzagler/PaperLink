@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"paperlink/db/entity"
 	"paperlink/db/repo"
 	"paperlink/util"
 
@@ -26,8 +27,9 @@ var (
 )
 
 type User struct {
-	UserID   int    `json:"userId"`
-	Username string `json:"username"`
+	UserID   int                     `json:"userId"`
+	Username string                  `json:"username"`
+	Role     entity.DocumentUserRole `json:"role"`
 }
 
 type TokenResult struct {
@@ -83,7 +85,7 @@ func NewService() *Service {
 var PDFCollab = NewService()
 
 func (s *Service) CreateSingleUseToken(documentID string, userID int) (*TokenResult, error) {
-	user, err := s.authorizeOwner(documentID, userID)
+	user, err := s.authorizeAccess(documentID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +93,7 @@ func (s *Service) CreateSingleUseToken(documentID string, userID int) (*TokenRes
 	return s.tokens.create(documentID, User{
 		UserID:   user.ID,
 		Username: user.Username,
+		Role:     user.Role,
 	})
 }
 
@@ -130,6 +133,9 @@ func (s *Service) handleIncomingPayload(currentRoom *room, client *client, paylo
 
 func (s *Service) handleClientMessage(currentRoom *room, client *client, message inboundMessage) error {
 	documentID := currentRoom.documentID
+	if client.user.Role == entity.Viewer && message.Type != "annotations:get" {
+		return ErrForbidden
+	}
 
 	switch message.Type {
 	case "annotations:get":
@@ -263,14 +269,19 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 	}
 }
 
-func (s *Service) authorizeOwner(documentID string, userID int) (*repoUser, error) {
+func (s *Service) authorizeAccess(documentID string, userID int) (*repoUser, error) {
 	doc := repo.Document.GetByUUIDWithFile(documentID)
 	if doc == nil {
 		return nil, ErrDocumentNotFound
 	}
 
+	role := entity.Editor
 	if doc.UserID != userID {
-		return nil, ErrForbidden
+		access, err := repo.DocumentUser.GetAccess(doc.ID, userID)
+		if err != nil || access == nil {
+			return nil, ErrForbidden
+		}
+		role = access.Role
 	}
 
 	user, err := repo.User.Get(userID)
@@ -281,12 +292,14 @@ func (s *Service) authorizeOwner(documentID string, userID int) (*repoUser, erro
 	return &repoUser{
 		ID:       user.ID,
 		Username: user.Username,
+		Role:     role,
 	}, nil
 }
 
 type repoUser struct {
 	ID       int
 	Username string
+	Role     entity.DocumentUserRole
 }
 
 func (s *Service) getOrCreateRoom(documentID string) *room {

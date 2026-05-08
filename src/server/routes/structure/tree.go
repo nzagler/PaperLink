@@ -11,9 +11,12 @@ import (
 )
 
 type FileNode struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Size uint64 `json:"size"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Size     uint64 `json:"size"`
+	Shared   bool   `json:"shared"`
+	Owner    string `json:"owner"`
+	ShareRole string `json:"shareRole"`
 }
 
 type DirNode struct {
@@ -50,6 +53,13 @@ func Tree(c *gin.Context) {
 		return
 	}
 
+	sharedDocuments, err := repo.Document.GetSharedByUserIdWithFile(userID)
+	if err != nil {
+		log.Errorf("failed to fetch shared documents for user %d: %v", userID, err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to fetch shared documents")
+		return
+	}
+
 	directoriesMap := make(map[int][]entity.Directory)
 	for _, directory := range directories {
 		parentID := 0
@@ -68,6 +78,8 @@ func Tree(c *gin.Context) {
 		documentsMap[directoryID] = append(documentsMap[directoryID], document)
 	}
 
+	documentsMap[0] = append(documentsMap[0], sharedDocuments...)
+
 	tree := buildTree(
 		"",
 		0,
@@ -75,19 +87,28 @@ func Tree(c *gin.Context) {
 		directoriesMap[0],
 		documentsMap,
 		directoriesMap,
+		userID,
 	)
 
 	routes.JSONSuccess(c, http.StatusOK, tree)
 }
 
-func mapDocuments(docs []entity.Document) []FileNode {
+func mapDocuments(docs []entity.Document, userID int) []FileNode {
 	files := make([]FileNode, 0, len(docs))
 
 	for _, d := range docs {
+		shared := d.UserID != userID
+		owner := ""
+		if shared {
+			owner = d.User.Username
+		}
+
 		files = append(files, FileNode{
-			ID:   d.UUID,
-			Name: d.Name,
-			Size: d.File.Size,
+			ID:     d.UUID,
+			Name:   d.Name,
+			Size:   d.File.Size,
+			Shared: shared,
+			Owner:  owner,
 		})
 	}
 
@@ -101,12 +122,13 @@ func buildTree(
 	directories []entity.Directory,
 	docMap map[int][]entity.Document,
 	dirMap map[int][]entity.Directory,
+	userID int,
 ) DirNode {
 
 	node := DirNode{
 		ID:          id,
 		Name:        name,
-		Files:       mapDocuments(documents),
+		Files:       mapDocuments(documents, userID),
 		Directories: make([]DirNode, 0),
 	}
 
@@ -118,6 +140,7 @@ func buildTree(
 			dirMap[directory.ID],
 			docMap,
 			dirMap,
+			userID,
 		)
 
 		node.Directories = append(node.Directories, child)

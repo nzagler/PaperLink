@@ -5,6 +5,8 @@ export type StructureFileNode = {
   id: string
   name: string
   size: number
+  shared?: boolean
+  owner?: string
 }
 
 export type StructureDirNode = {
@@ -19,6 +21,8 @@ export type SearchIndexItem = {
   title: string
   path: string
   sizeBytes: number
+  owner: string
+  shared: boolean
 }
 
 export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
@@ -43,6 +47,8 @@ export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
         title: f.name,
         path: currentPrefix,
         sizeBytes: f.size ?? 0,
+        owner: f.owner || "You",
+        shared: Boolean(f.shared),
       })
     }
 

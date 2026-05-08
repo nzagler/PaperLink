@@ -2,6 +2,8 @@ package repo
 
 import (
 	"paperlink/db/entity"
+
+	"gorm.io/gorm"
 )
 
 type UserRepo struct {
@@ -25,11 +27,19 @@ func (n *UserRepo) DoesUserByNameExist(name string) bool {
 
 func (n *UserRepo) GetUserByName(name string) (*entity.User, error) {
 	var user entity.User
-	err := n.db.Where("Username = ?", name).Find(&user).Error
+	err := n.db.Where("Username = ?", name).First(&user).Error
 	if err != nil {
 		return nil, err
 	}
 	return &user, err
+}
+
+func (n *UserRepo) GetUserByNameOrNil(name string) (*entity.User, error) {
+	user, err := n.GetUserByName(name)
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return user, err
 }
 
 func (n *DocumentRepo) GetOwnedDocuments(userId int) ([]entity.Document, error) {
