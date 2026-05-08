@@ -6,5 +6,5 @@ type OIDCConfig struct {
 	ClientID     string `gorm:"not null"`
 	ClientSecret string `gorm:"not null"`
 	Scopes       string `gorm:"not null;default:openid profile email"`
-	Enabled      bool   `gorm:"not null;default:true"`
+	Enabled      bool   `gorm:"not null;default:false"`
 }

@@ -92,7 +92,7 @@ const oidcIssuerUrl = ref("")
 const oidcClientId = ref("")
 const oidcClientSecret = ref("")
 const oidcScopes = ref("openid profile email")
-const oidcEnabled = ref(true)
+const oidcEnabled = ref(false)
 const oidcConfigured = ref(false)
 const oidcConnected = ref(false)
 const oidcLoading = ref(false)
@@ -303,17 +303,17 @@ onMounted(() => {
           {{ oidcConnected ? 'This account is linked to OIDC.' : 'Save a provider, then connect this account.' }}
         </div>
 
+        <label class="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-200">
+          <input v-model="oidcEnabled" type="checkbox" class="h-4 w-4 rounded border-neutral-300 accent-emerald-700" />
+          Enable OIDC
+        </label>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <Input v-model="oidcIssuerUrl" placeholder="Issuer URL, e.g. https://id.example.com" />
           <Input v-model="oidcClientId" placeholder="Client ID" />
           <Input v-model="oidcClientSecret" placeholder="Client secret" />
           <Input v-model="oidcScopes" placeholder="Scopes" />
         </div>
-
-        <label class="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-200">
-          <input v-model="oidcEnabled" type="checkbox" class="h-4 w-4 rounded border-neutral-300 accent-emerald-700" />
-          Enable external login
-        </label>
 
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <p class="text-[11px] text-neutral-500 dark:text-neutral-400">
