@@ -220,3 +220,32 @@ func Unshare(c *gin.Context) {
 
 	c.Status(http.StatusNoContent)
 }
+
+func RemoveOwnShare(c *gin.Context) {
+	uuid := c.Param("id")
+	userID := c.GetInt("userId")
+
+	doc := repo.Document.GetByUUIDWithFile(uuid)
+	if doc == nil {
+		routes.JSONError(c, http.StatusNotFound, "document not found")
+		return
+	}
+	if doc.UserID == userID {
+		routes.JSONError(c, http.StatusBadRequest, "owner cannot remove own document access")
+		return
+	}
+
+	share, err := repo.DocumentUser.GetInvite(doc.ID, userID)
+	if err != nil || share == nil || share.Status != entity.DocumentInviteAccepted {
+		routes.JSONError(c, http.StatusNotFound, "accepted share not found")
+		return
+	}
+
+	if err := repo.DocumentUser.DeleteShare(doc.ID, userID); err != nil {
+		log.Errorf("failed to remove own share for document %s and user %d: %v", uuid, userID, err)
+		routes.JSONError(c, http.StatusInternalServerError, "failed to remove share")
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}

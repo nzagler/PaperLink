@@ -83,7 +83,7 @@ onMounted(() => {
   <div class="mx-auto max-w-5xl px-4 lg:px-6 py-5 lg:py-7 space-y-4">
     <header class="flex items-center justify-between gap-3">
       <div>
-        <h1 class="text-lg font-semibold tracking-tight">Invites</h1>
+        <h1 class="text-lg font-semibold tracking-tight">Inbox</h1>
         <p class="text-xs text-neutral-500 dark:text-neutral-400">Review document sharing invitations.</p>
       </div>
       <Button variant="outline" size="sm" :disabled="loading" @click="loadInvites">

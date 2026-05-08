@@ -767,6 +767,26 @@ function deleteFromContext() {
   closeContextMenu()
 }
 
+async function removeSharedDocumentFromContext() {
+  const target = contextMenuTarget.value
+  if (!target || target.type !== 'file' || !target.shared) return
+  closeContextMenu()
+  loadError.value = null
+
+  try {
+    const res = await apiFetch(`/api/v1/document/${target.id}/share/me`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      throw new Error(json?.error ?? json?.message ?? `Failed to remove document. (${res.status})`)
+    }
+    await loadTree()
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : 'Failed to remove document.'
+  }
+}
+
 defineExpose({
   addUploadedFile,
   addCreatedDirectory,
@@ -1028,6 +1048,14 @@ defineExpose({
                   >
                     <Trash2 class="h-4 w-4" />
                     Delete
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                      v-if="contextMenuTarget?.type === 'file' && contextMenuTarget?.shared"
+                      class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-600 data-[highlighted]:bg-red-600/10 data-[highlighted]:text-red-700 dark:text-red-400 dark:data-[highlighted]:bg-red-500/15 dark:data-[highlighted]:text-red-300"
+                      @select.prevent="removeSharedDocumentFromContext"
+                  >
+                    <X class="h-4 w-4" />
+                    Remove
                   </DropdownMenuItem>
                  </DropdownMenuContent>
                </DropdownMenu>

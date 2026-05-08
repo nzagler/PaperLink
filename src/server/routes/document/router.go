@@ -24,5 +24,6 @@ func InitDocumentRouter(r *gin.Engine) {
 	group.POST("/:id/share", Share)
 	group.POST("/:id/invite/accept", AcceptInvite)
 	group.POST("/:id/invite/decline", DeclineInvite)
+	group.DELETE("/:id/share/me", RemoveOwnShare)
 	group.DELETE("/:id/share/:userId", Unshare)
 }

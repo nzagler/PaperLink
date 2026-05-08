@@ -40,7 +40,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/invites',
-    name: 'Invites',
+    name: 'Inbox',
     component: Invites,
     meta: { requiresAuth: true, hideSidebar: false, forceSidebarClosed: false },
   },

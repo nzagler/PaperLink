@@ -72,7 +72,7 @@ const effectiveOpen = computed(() => {
 const navItems = computed(() => [
   { title: 'Home', to: '/', icon: HomeIcon },
   { title: 'Search', to: '/search', icon: SearchIcon },
-  { title: 'Invites', to: '/invites', icon: Inbox },
+  { title: 'Inbox', to: '/invites', icon: Inbox },
   { title: 'Digi4School', to: '/d4s', icon: D4SIcon },
 ])
 
