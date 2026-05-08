@@ -2,6 +2,7 @@ package structure
 
 import (
 	"net/http"
+	"time"
 
 	"paperlink/db/entity"
 	"paperlink/db/repo"
@@ -11,12 +12,15 @@ import (
 )
 
 type FileNode struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Size     uint64 `json:"size"`
-	Shared   bool   `json:"shared"`
-	Owner    string `json:"owner"`
-	ShareRole string `json:"shareRole"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Size      uint64    `json:"size"`
+	PageCount uint64    `json:"pageCount"`
+	Tags      []string  `json:"tags"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Shared    bool      `json:"shared"`
+	Owner     string    `json:"owner"`
+	ShareRole string    `json:"shareRole"`
 }
 
 type DirNode struct {
@@ -103,12 +107,20 @@ func mapDocuments(docs []entity.Document, userID int) []FileNode {
 			owner = d.User.Username
 		}
 
+		tags := make([]string, 0, len(d.Tags))
+		for _, t := range d.Tags {
+			tags = append(tags, t.Name)
+		}
+
 		files = append(files, FileNode{
-			ID:     d.UUID,
-			Name:   d.Name,
-			Size:   d.File.Size,
-			Shared: shared,
-			Owner:  owner,
+			ID:        d.UUID,
+			Name:      d.Name,
+			Size:      d.File.Size,
+			PageCount: d.File.Pages,
+			Tags:      tags,
+			UpdatedAt: d.UpdatedAt,
+			Shared:    shared,
+			Owner:     owner,
 		})
 	}
 

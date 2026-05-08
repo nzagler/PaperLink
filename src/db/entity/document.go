@@ -1,5 +1,11 @@
 package entity
 
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
 type Document struct {
 	ID          int    `gorm:"primaryKey" json:"id"`
 	UUID        string `gorm:"uniqueIndex;not null" json:"uuid"`
@@ -16,4 +22,11 @@ type Document struct {
 
 	DirectoryID *int       `json:"directoryId"`
 	Directory   *Directory `gorm:"foreignKey:DirectoryID;constraint:OnDelete:CASCADE" json:"directory"`
+
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func (d *Document) BeforeSave(tx *gorm.DB) error {
+	d.UpdatedAt = time.Now()
+	return nil
 }

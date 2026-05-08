@@ -9,6 +9,11 @@ if ! command -v brotli >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v gzip >/dev/null 2>&1; then
+  echo "gzip is required but was not found in PATH" >&2
+  exit 1
+fi
+
 if [[ ! -d "$target_dir" ]]; then
   echo "Directory not found: $target_dir" >&2
   exit 1
@@ -53,26 +58,33 @@ print_summary_line() {
 }
 
 total_before=0
-total_after=0
+total_br_after=0
+total_gz_after=0
 file_count=0
 
 while IFS= read -r -d '' file; do
   before_size="$(stat -c %s "$file")"
-  temp_file="$(mktemp)"
 
-  brotli --force --quality=11 --output="$temp_file" "$file"
-  mv "$temp_file" "$file"
+  # Brotli sidecar (.br) — original file is kept untouched
+  brotli --force --quality=11 --output="${file}.br" "$file"
+  br_size="$(stat -c %s "${file}.br")"
 
-  after_size="$(stat -c %s "$file")"
+  # Gzip sidecar (.gz) — keep original, no timestamp in header
+  gzip --best --keep --force --no-name "$file"
+  gz_size="$(stat -c %s "${file}.gz")"
 
   total_before=$((total_before + before_size))
-  total_after=$((total_after + after_size))
+  total_br_after=$((total_br_after + br_size))
+  total_gz_after=$((total_gz_after + gz_size))
   file_count=$((file_count + 1))
 
-  print_summary_line "$file" "$before_size" "$after_size"
+  printf '%s (%s)\n' "$file" "$(format_bytes "$before_size")"
+  printf '  br:   '; print_summary_line "  " "$before_size" "$br_size"
+  printf '  gz:   '; print_summary_line "  " "$before_size" "$gz_size"
 done < <(
   find "$target_dir" -type f \
     \( -iname '*.html' -o -iname '*.css' -o -iname '*.js' \) \
+    ! -iname '*.br' ! -iname '*.gz' \
     -print0 | sort -z
 )
 
@@ -83,4 +95,6 @@ fi
 
 echo
 echo "Processed $file_count files"
-print_summary_line "Total" "$total_before" "$total_after"
+printf 'Total plain: %s\n' "$(format_bytes "$total_before")"
+printf 'Total br:    '; print_summary_line "Total" "$total_before" "$total_br_after"
+printf 'Total gz:    '; print_summary_line "Total" "$total_before" "$total_gz_after"

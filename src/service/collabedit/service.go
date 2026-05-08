@@ -51,8 +51,8 @@ type outboundMessage struct {
 	User            *User                   `json:"user,omitempty"`
 	Users           []User                  `json:"users,omitempty"`
 	Page            *int64                  `json:"page,omitempty"`
-	Annotation      *annotationMessage      `json:"annotation,omitempty"`
-	Annotations     []annotationMessage     `json:"annotations,omitempty"`
+	Annotation      *AnnotationMessage      `json:"annotation,omitempty"`
+	Annotations     []AnnotationMessage     `json:"annotations,omitempty"`
 	AnnotationID    *int                    `json:"annotationId,omitempty"`
 	AnnotationLock  *annotationLockMessage  `json:"annotationLock,omitempty"`
 	AnnotationLocks []annotationLockMessage `json:"annotationLocks,omitempty"`
@@ -62,7 +62,7 @@ type outboundMessage struct {
 type inboundMessage struct {
 	Type         string             `json:"type"`
 	Page         *int64             `json:"page,omitempty"`
-	Annotation   *annotationMessage `json:"annotation,omitempty"`
+	Annotation   *AnnotationMessage `json:"annotation,omitempty"`
 	AnnotationID *int               `json:"annotationId,omitempty"`
 }
 
@@ -166,6 +166,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return err
 		}
 
+		repo.Document.TouchUpdatedAt(documentID)
+
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:created",
 			DocumentID: documentID,
@@ -183,6 +185,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 		if err != nil {
 			return err
 		}
+
+		repo.Document.TouchUpdatedAt(documentID)
 
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:updated",
@@ -202,6 +206,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return err
 		}
 
+		repo.Document.TouchUpdatedAt(documentID)
+
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:moved",
 			DocumentID: documentID,
@@ -218,6 +224,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 		if err := s.annotations.DeleteAnnotation(documentID, client.id, *message.AnnotationID); err != nil {
 			return err
 		}
+
+		repo.Document.TouchUpdatedAt(documentID)
 
 		currentRoom.broadcast(outboundMessage{
 			Type:         "annotation:deleted",

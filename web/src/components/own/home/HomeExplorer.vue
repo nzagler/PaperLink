@@ -49,7 +49,16 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 
-type ApiFileNode = { id: string; name: string; size: number; shared?: boolean; owner?: string }
+type ApiFileNode = {
+  id: string
+  name: string
+  size: number
+  pageCount?: number
+  tags?: string[]
+  updatedAt?: string
+  shared?: boolean
+  owner?: string
+}
 type ApiDirNode = { id: number; name: string; files: ApiFileNode[]; directories: ApiDirNode[] }
 type ShareRole = 'VIEWER' | 'EDITOR'
 type DocumentShare = { userId: number; username: string; role: ShareRole }
@@ -212,8 +221,6 @@ function updatePath(newPath: string[], pushToHistory = true) {
   history.value.push(normalized)
   historyIndex.value++
 }
-
-
 
 function breadcrumbClick(index: number) {
   const newPath = index < 0 ? [] : pathIds.value.slice(0, index + 1)
@@ -702,7 +709,7 @@ async function deleteTargetItem() {
     const res = await apiFetch(url, { method: 'DELETE' })
     if (!res.ok) {
       const json = await res.json().catch(() => null)
-      throw new Error(json?.message || 'Failed to delete item.')
+      throw new Error(json?.error ?? json?.message ?? `Failed to delete item. (${res.status})`)
     }
 
     const parentPath = pathIds.value.slice(0, -1)

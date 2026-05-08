@@ -42,8 +42,8 @@ func (n *UserRepo) GetUserByNameOrNil(name string) (*entity.User, error) {
 	return user, err
 }
 
-func (n *DocumentRepo) GetOwnedDocuments(userId int) ([]entity.Document, error) {
+func (r *DocumentRepo) GetOwnedDocuments(userId int) ([]entity.Document, error) {
 	var documents []entity.Document
-	err := n.db.Where("UserID = ?", userId).Find(&documents).Error
+	err := r.db.Where("UserID = ?", userId).Find(&documents).Error
 	return documents, err
 }
