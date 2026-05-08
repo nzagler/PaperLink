@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { MoreVertical, RefreshCcw, LibraryBig } from "lucide-vue-next"
+import { apiFetch } from "@/auth/api"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 
-import { apiFetch } from "@/auth/api"
 import { listD4SBooks, takeD4SBook, type Digi4SchoolBook } from "@/lib/d4s_api"
 
 type Notice = { type: "success" | "error"; message: string } | null
@@ -40,10 +40,9 @@ function revokeThumbnailUrls() {
   }
 }
 
-async function fetchFirstThumbnail(bookID: number): Promise<string | null> {
-  const res = await apiFetch(`/api/v1/d4s/thumbnail/${bookID}`)
+async function fetchFirstThumbnail(id: number): Promise<string | null> {
+  const res = await apiFetch(`/api/v1/d4s/thumbnail/${id}`)
   if (!res.ok) return null
-
   const blob = await res.blob()
   return URL.createObjectURL(blob)
 }
@@ -57,6 +56,7 @@ async function loadBookThumbnails(nextBooks: Digi4SchoolBook[]) {
     while (cursor < nextBooks.length) {
       const i = cursor++
       const book = nextBooks[i]
+      if (!book) continue
       const url = await fetchFirstThumbnail(book.id).catch(() => null)
       if (url) nextThumbnails[book.id] = url
     }
@@ -178,11 +178,11 @@ onBeforeUnmount(() => {
 
       <div v-else class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <Card
-          v-for="book in filteredBooks"
-          :key="book.id"
-          class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm"
+            v-for="book in filteredBooks"
+            :key="book.id"
+            class="overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm gap-0 pt-0"
         >
-          <div class="relative aspect-[3/4]">
+          <div class="relative aspect-[3/4] mt-0">
             <img
               v-if="bookThumbnails[book.id]"
               :src="bookThumbnails[book.id]"
@@ -216,11 +216,11 @@ onBeforeUnmount(() => {
 
           <CardContent class="p-3">
             <div class="space-y-1">
-              <p class="text-sm font-semibold leading-snug line-clamp-2">
+              <p class="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5em]">
                 {{ book.bookName }}
               </p>
               <p class="text-[11px] text-neutral-500 dark:text-neutral-400">
-                BookID: {{ book.bookID }}
+                BookID: {{ book.bookId }}
               </p>
             </div>
 

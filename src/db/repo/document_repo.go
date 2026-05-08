@@ -1,9 +1,11 @@
 package repo
 
 import (
-	"gorm.io/gorm"
 	"paperlink/db/entity"
 	"strings"
+	"time"
+
+	"gorm.io/gorm"
 )
 
 type DocumentRepo struct {
@@ -16,15 +18,15 @@ func newDocumentRepo() *DocumentRepo {
 
 var Document = newDocumentRepo()
 
-func (n *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, error) {
+func (r *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, error) {
 	var annotations []entity.Annotation
-	err := n.db.Where("document_id = ?", documentID).Find(&annotations).Error
+	err := r.db.Where("document_id = ?", documentID).Find(&annotations).Error
 	return annotations, err
 }
 
 func (r *DocumentRepo) GetAllByUserIdWithFile(userId int) ([]entity.Document, error) {
 	var result []entity.Document
-	err := r.db.Preload("File").Where("user_id = ?", userId).Find(&result).Error
+	err := r.db.Preload("File").Preload("Tags").Where("user_id = ?", userId).Find(&result).Error
 	return result, err
 }
 
@@ -48,6 +50,22 @@ func (r *DocumentRepo) GetByUUIDWithTagsAndFile(uuid string) *entity.Document {
 		return nil
 	}
 	return &doc
+}
+
+func (r *DocumentRepo) DeleteByUUID(uuid string) error {
+	res := r.db.
+		Where("uuid = ?", uuid).
+		Delete(&entity.Document{})
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entity.Document, error) {
@@ -99,4 +117,10 @@ func (r *DocumentRepo) UpdateFieldsAndTags(doc *entity.Document, updates map[str
 
 		return nil
 	})
+}
+
+func (r *DocumentRepo) TouchUpdatedAt(uuid string) {
+	r.db.Model(&entity.Document{}).
+		Where("uuid = ?", uuid).
+		Update("updated_at", time.Now())
 }

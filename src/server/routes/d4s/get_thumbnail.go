@@ -5,14 +5,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"paperlink/pvf"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"paperlink/db/repo"
-	"paperlink/pvf"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,7 +24,7 @@ func d4sThumbCachePath(uuid string) string {
 	return path.Join(d4sThumbCacheDir, uuid+".webp")
 }
 
-func ensureD4SThumbnail(uuid string, pdfPath string) (string, error) {
+func ensureD4SThumbnail(uuid string, pvfPath string) (string, error) {
 	thumbPath := d4sThumbCachePath(uuid)
 	if st, err := os.Stat(thumbPath); err == nil && !st.IsDir() {
 		return thumbPath, nil
@@ -37,26 +36,23 @@ func ensureD4SThumbnail(uuid string, pdfPath string) (string, error) {
 		return "", err
 	}
 
-	// PVF files are not PDF — extract page 1 to a temp PDF for Ghostscript.
-	gsInput := pdfPath
-	if filepath.Ext(pdfPath) == ".pvf" {
-		pageData, err := pvf.ReadPage(pdfPath, 1)
-		if err != nil {
-			return "", fmt.Errorf("failed to read page 1 from pvf: %w", err)
-		}
-		tmpPDFPath := fmt.Sprintf("%s.%d.tmp.pdf", thumbPath, time.Now().UnixNano())
-		if err := os.WriteFile(tmpPDFPath, pageData, 0o644); err != nil {
-			return "", fmt.Errorf("failed to write temp pdf from pvf: %w", err)
-		}
-		defer os.Remove(tmpPDFPath)
-		gsInput = tmpPDFPath
+	// Extract page 1 from the PVF into a temp PDF for Ghostscript
+	pageData, err := pvf.ReadPage(pvfPath, 1)
+	if err != nil {
+		return "", fmt.Errorf("failed to read first pvf page: %w", err)
 	}
 
 	stamp := time.Now().UnixNano()
+	tmpPDFPath := fmt.Sprintf("%s.%d.tmp.pdf", thumbPath, stamp)
 	tmpPNGPath := fmt.Sprintf("%s.%d.tmp.png", thumbPath, stamp)
 	tmpWebPPath := fmt.Sprintf("%s.%d.tmp.webp", thumbPath, stamp)
-	_ = os.Remove(tmpPNGPath)
-	_ = os.Remove(tmpWebPPath)
+	defer os.Remove(tmpPDFPath)
+	defer os.Remove(tmpPNGPath)
+	defer os.Remove(tmpWebPPath)
+
+	if err := os.WriteFile(tmpPDFPath, pageData, 0o644); err != nil {
+		return "", fmt.Errorf("failed to write temp pdf: %w", err)
+	}
 
 	gsCmd := exec.Command(
 		"gs",
@@ -69,7 +65,7 @@ func ensureD4SThumbnail(uuid string, pdfPath string) (string, error) {
 		"-dBATCH",
 		"-dNOPAUSE",
 		"-sOutputFile="+tmpPNGPath,
-		gsInput,
+		tmpPDFPath, // temp PDF instead of the .pvf
 	)
 	out, err := gsCmd.CombinedOutput()
 	if err != nil {
@@ -79,15 +75,10 @@ func ensureD4SThumbnail(uuid string, pdfPath string) (string, error) {
 	webpCmd := exec.Command("cwebp", "-quiet", "-q", d4sThumbWebPQuality, tmpPNGPath, "-o", tmpWebPPath)
 	out, err = webpCmd.CombinedOutput()
 	if err != nil {
-		_ = os.Remove(tmpPNGPath)
-		_ = os.Remove(tmpWebPPath)
 		return "", fmt.Errorf("cwebp failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	_ = os.Remove(tmpPNGPath)
-
 	if err := os.Rename(tmpWebPPath, thumbPath); err != nil {
-		_ = os.Remove(tmpWebPPath)
 		return "", err
 	}
 	return thumbPath, nil
@@ -128,9 +119,15 @@ func GetThumbnail(c *gin.Context) {
 		return
 	}
 
+	if _, err := os.Stat(file.Path); err != nil {
+		c.String(http.StatusNotFound, "pdf file missing on disk")
+		return
+	}
+
 	thumbPath, err := ensureD4SThumbnail(book.FileUUID, file.Path)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "failed to create thumbnail:"+err.Error())
+		fmt.Printf("ensureD4SThumbnail error for uuid=%s path=%s: %v\n", book.FileUUID, file.Path, err)
+		c.String(http.StatusInternalServerError, "failed to create thumbnail")
 		return
 	}
 

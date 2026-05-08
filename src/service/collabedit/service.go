@@ -160,6 +160,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return err
 		}
 
+		repo.Document.TouchUpdatedAt(documentID)
+
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:created",
 			DocumentID: documentID,
@@ -177,6 +179,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 		if err != nil {
 			return err
 		}
+
+		repo.Document.TouchUpdatedAt(documentID)
 
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:updated",
@@ -196,6 +200,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 			return err
 		}
 
+		repo.Document.TouchUpdatedAt(documentID)
+
 		currentRoom.broadcast(outboundMessage{
 			Type:       "annotation:moved",
 			DocumentID: documentID,
@@ -212,6 +218,8 @@ func (s *Service) handleClientMessage(currentRoom *room, client *client, message
 		if err := s.annotations.DeleteAnnotation(documentID, client.id, *message.AnnotationID); err != nil {
 			return err
 		}
+
+		repo.Document.TouchUpdatedAt(documentID)
 
 		currentRoom.broadcast(outboundMessage{
 			Type:         "annotation:deleted",

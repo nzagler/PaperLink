@@ -29,11 +29,13 @@ function formatBytes(bytes: number) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+/* Placeholder
 function pathToTags(path: string) {
   const normalized = (path || '').trim().replace(/^\/+|\/+$/g, '')
   if (!normalized) return ['Root']
   return normalized.split('/').filter(Boolean)
 }
+*/
 
 export function useSearchView() {
   const searchQuery = ref('')
@@ -55,10 +57,10 @@ export function useSearchView() {
         id: it.id,
         title: it.title,
         description: it.path ? `Folder: ${it.path}` : 'Folder: /',
-        tags: pathToTags(it.path),
-        pages: 0,
+        tags: it.tags ?? [],
+        pages: it.pageCount ?? 0,
         size: formatBytes(it.sizeBytes),
-        updatedAt: '',
+        updatedAt: it.updatedAt ? new Date(it.updatedAt).toLocaleDateString() : '—',
         owner: 'You',
         shared: false,
         path: it.path,
@@ -106,9 +108,11 @@ export function useSearchView() {
       list = list.filter((item) => selectedTags.value.every((tag) => item.tags.includes(tag)))
     }
 
-    if (selectedSort.value === 'az') {
-      list.sort((a, b) => a.title.localeCompare(b.title))
-    }
+      if (selectedSort.value === 'az') {
+          list.sort((a, b) => a.title.localeCompare(b.title))
+      } else if (selectedSort.value === 'recent') {
+          list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      }
 
     return list
   })

@@ -35,13 +35,6 @@
                 <SelectItem value="shared">Shared</SelectItem>
               </SelectContent>
             </Select>
-
-            <Button
-                type="submit"
-                class="h-9 rounded-full px-4 text-xs sm:text-sm"
-            >
-              Search
-            </Button>
           </div>
         </form>
       </div>
@@ -74,7 +67,6 @@
                 class="h-7 w-7 rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 @click="resetFilters"
             >
-              <FilterIcon class="h-4 w-4" />
             </Button>
           </div>
         </CardHeader>
@@ -294,6 +286,7 @@
                 v-for="result in filteredResults"
                 :key="result.id"
                 class="group border border-neutral-200 bg-white transition hover:-translate-y-[1px] hover:border-emerald-600/80 hover:shadow-md hover:shadow-emerald-900/10 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-emerald-500/80"
+                @click="openResult(result.id)"
             >
               <div class="flex gap-3 p-3">
                 <!-- Icon column -->
@@ -410,6 +403,14 @@ import {
   Loader2,
   ChevronDown,
 } from 'lucide-vue-next'
+
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
+function openResult(id: string | number) {
+  void router.push('/pdf/' + id)
+}
 
 const {
   searchQuery,

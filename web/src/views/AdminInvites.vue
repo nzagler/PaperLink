@@ -103,7 +103,7 @@ async function copyCode() {
           </div>
           <div>
             <h1 class="text-lg font-semibold tracking-tight">Admin · Invites</h1>
-            <p class="text-xs text-neutral-500 dark:text-neutral-400">Create one-time invite codes for registration.</p>
+            <p class="text-xs text-neutral-500 dark:text-neutral-400">Create invite codes for registration.</p>
           </div>
         </div>
 
