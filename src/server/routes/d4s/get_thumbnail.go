@@ -7,13 +7,11 @@ import (
 	"os/exec"
 	"paperlink/pvf"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"paperlink/db/repo"
-	"paperlink/pvf"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,19 +36,10 @@ func ensureD4SThumbnail(uuid string, pvfPath string) (string, error) {
 		return "", err
 	}
 
-	// PVF files are not PDF — extract page 1 to a temp PDF for Ghostscript.
-	gsInput := pdfPath
-	if filepath.Ext(pdfPath) == ".pvf" {
-		pageData, err := pvf.ReadPage(pdfPath, 1)
-		if err != nil {
-			return "", fmt.Errorf("failed to read page 1 from pvf: %w", err)
-		}
-		tmpPDFPath := fmt.Sprintf("%s.%d.tmp.pdf", thumbPath, time.Now().UnixNano())
-		if err := os.WriteFile(tmpPDFPath, pageData, 0o644); err != nil {
-			return "", fmt.Errorf("failed to write temp pdf from pvf: %w", err)
-		}
-		defer os.Remove(tmpPDFPath)
-		gsInput = tmpPDFPath
+	// Extract page 1 from the PVF into a temp PDF for Ghostscript
+	pageData, err := pvf.ReadPage(pvfPath, 1)
+	if err != nil {
+		return "", fmt.Errorf("failed to read first pvf page: %w", err)
 	}
 
 	stamp := time.Now().UnixNano()
@@ -76,7 +65,7 @@ func ensureD4SThumbnail(uuid string, pvfPath string) (string, error) {
 		"-dBATCH",
 		"-dNOPAUSE",
 		"-sOutputFile="+tmpPNGPath,
-		gsInput,
+		tmpPDFPath, // temp PDF instead of the .pvf
 	)
 	out, err := gsCmd.CombinedOutput()
 	if err != nil {
@@ -137,7 +126,8 @@ func GetThumbnail(c *gin.Context) {
 
 	thumbPath, err := ensureD4SThumbnail(book.FileUUID, file.Path)
 	if err != nil {
-		c.String(http.StatusInternalServerError, "failed to create thumbnail:"+err.Error())
+		fmt.Printf("ensureD4SThumbnail error for uuid=%s path=%s: %v\n", book.FileUUID, file.Path, err)
+		c.String(http.StatusInternalServerError, "failed to create thumbnail")
 		return
 	}
 
