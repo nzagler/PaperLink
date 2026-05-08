@@ -61,8 +61,8 @@ export function useSearchView() {
         pages: it.pageCount ?? 0,
         size: formatBytes(it.sizeBytes),
         updatedAt: it.updatedAt ? new Date(it.updatedAt).toLocaleDateString() : '—',
-        owner: 'You',
-        shared: false,
+        owner: it.owner,
+        shared: it.shared,
         path: it.path,
       }))
     } catch (e: any) {
@@ -102,6 +102,8 @@ export function useSearchView() {
 
     if (selectedScope.value === 'shared') {
       list = list.filter((item) => item.shared)
+    } else if (selectedScope.value === 'mine') {
+      list = list.filter((item) => !item.shared)
     }
 
     if (selectedTags.value.length) {

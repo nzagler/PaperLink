@@ -6,5 +6,7 @@ export interface Item {
     name: string
     type: ItemType
     size?: number
+    shared?: boolean
+    owner?: string
     children?: Item[]
 }

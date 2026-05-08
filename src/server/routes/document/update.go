@@ -33,12 +33,16 @@ func Update(c *gin.Context) {
 		routes.JSONError(c, http.StatusNotFound, "document not found")
 		return
 	}
-	if doc.UserID != userID {
+	if !canEditDocument(doc, userID) {
 		routes.JSONError(c, http.StatusForbidden, "not authorized")
 		return
 	}
 
 	if req.DirectoryID != nil {
+		if doc.UserID != userID {
+			routes.JSONError(c, http.StatusForbidden, "shared documents cannot be moved")
+			return
+		}
 		if *req.DirectoryID != 0 {
 			dir, err := repo.Directory.Get(*req.DirectoryID)
 			if err != nil || dir == nil {

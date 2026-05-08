@@ -8,6 +8,8 @@ export type StructureFileNode = {
   pageCount: number
   tags: string[]
   updatedAt: string
+  shared?: boolean
+  owner?: string
 }
 
 export type StructureDirNode = {
@@ -25,6 +27,8 @@ export type SearchIndexItem = {
   pageCount: number
   tags: string[]
   updatedAt: string
+  owner: string
+  shared: boolean
 }
 
 export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
@@ -51,7 +55,9 @@ export async function fetchSearchIndexFromTree(): Promise<SearchIndexItem[]> {
         sizeBytes: f.size ?? 0,
         pageCount: f.pageCount ?? 0,
         tags: f.tags ?? [],
-        updatedAt: f.updatedAt ?? ""
+        updatedAt: f.updatedAt ?? "",
+        owner: f.owner || "You",
+        shared: Boolean(f.shared),
       })
     }
 

@@ -19,6 +19,8 @@ type FilterDocumentItem struct {
 	FileUUID string `json:"fileUUID"`
 	Pages    uint64 `json:"pages"`
 	Size     uint64 `json:"size"`
+	Owner    string `json:"owner"`
+	Shared   bool   `json:"shared"`
 }
 
 func Filter(c *gin.Context) {
@@ -61,6 +63,8 @@ func Filter(c *gin.Context) {
 			FileUUID:    d.FileUUID,
 			Pages:       d.File.Pages,
 			Size:        d.File.Size,
+			Owner:       d.User.Username,
+			Shared:      d.UserID != userID,
 		})
 	}
 

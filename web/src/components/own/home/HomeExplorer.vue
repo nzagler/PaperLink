@@ -11,6 +11,8 @@ import {
   Loader2,
   Trash2,
   PencilLine,
+  Share2,
+  X,
 } from 'lucide-vue-next'
 import {
   Breadcrumb,
@@ -43,12 +45,25 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 
-type ApiFileNode = { id: string; name: string; size: number }
+type ApiFileNode = {
+  id: string
+  name: string
+  size: number
+  pageCount?: number
+  tags?: string[]
+  updatedAt?: string
+  shared?: boolean
+  owner?: string
+}
 type ApiDirNode = { id: number; name: string; files: ApiFileNode[]; directories: ApiDirNode[] }
+type ShareRole = 'VIEWER' | 'EDITOR'
+type ShareStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED'
+type DocumentShare = { userId: number; username: string; role: ShareRole; status: ShareStatus }
+type UserSuggestion = { id: number; username: string }
 const router = useRouter()
 function mapDirNodeToItems(node: ApiDirNode): Item[] {
   const dirs: Item[] = (node.directories ?? []).map(d => ({
@@ -63,6 +78,8 @@ function mapDirNodeToItems(node: ApiDirNode): Item[] {
     name: f.name.endsWith('.pdf') ? f.name : `${f.name}.pdf`,
     type: 'file',
     size: f.size,
+    shared: Boolean(f.shared),
+    owner: f.owner,
   }))
 
   return [...dirs, ...files]
@@ -338,6 +355,16 @@ const editTags = ref('')
 const editLoading = ref(false)
 const editError = ref<string | null>(null)
 
+const shareDialogOpen = ref(false)
+const shareTarget = ref<Item | null>(null)
+const shareUsername = ref('')
+const shareRole = ref<ShareRole>('VIEWER')
+const shares = ref<DocumentShare[]>([])
+const userSuggestions = ref<UserSuggestion[]>([])
+const shareLoading = ref(false)
+const shareError = ref<string | null>(null)
+let shareUserSearchTimer: ReturnType<typeof setTimeout> | null = null
+
 function normalizeTagNames(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   return (raw as any[])
@@ -439,6 +466,26 @@ function resetEditState() {
   editError.value = null
 }
 
+function resetShareState() {
+  shareDialogOpen.value = false
+  shareTarget.value = null
+  shareUsername.value = ''
+  shareRole.value = 'VIEWER'
+  shares.value = []
+  userSuggestions.value = []
+  shareLoading.value = false
+  shareError.value = null
+  if (shareUserSearchTimer) {
+    clearTimeout(shareUserSearchTimer)
+    shareUserSearchTimer = null
+  }
+}
+
+function onShareDialogChange(val: boolean) {
+  shareDialogOpen.value = val
+  if (!val) resetShareState()
+}
+
 function ensurePdfExtension(name: string) {
   return /\.pdf$/i.test(name) ? name : `${name}.pdf`
 }
@@ -504,7 +551,7 @@ async function submitRename() {
 }
 
 function startEditDocument(item: Item) {
-  if (item.type !== 'file') return
+  if (item.type !== 'file' || item.shared) return
   editTarget.value = item
   // optimistic: use current item name, keep description/tags until we have real data
   populateEditFields({ name: item.name })
@@ -512,6 +559,105 @@ function startEditDocument(item: Item) {
   editError.value = null
   closeContextMenu()
   void loadDocumentDetails(item.id)
+}
+
+function startShareDocument(item: Item) {
+  if (item.type !== 'file' || item.shared) return
+  shareTarget.value = item
+  shareUsername.value = ''
+  shareRole.value = 'VIEWER'
+  shareError.value = null
+  shareDialogOpen.value = true
+  closeContextMenu()
+  void loadShares(item.id)
+  void loadUserSuggestions('')
+}
+
+function queueUserSuggestions() {
+  if (shareUserSearchTimer) clearTimeout(shareUserSearchTimer)
+  shareUserSearchTimer = setTimeout(() => {
+    void loadUserSuggestions(shareUsername.value)
+  }, 180)
+}
+
+async function loadUserSuggestions(query: string) {
+  try {
+    const params = new URLSearchParams()
+    params.set('limit', '8')
+    if (query.trim()) params.set('q', query.trim())
+    const res = await apiFetch(`/api/v1/document/share/users?${params.toString()}`)
+    const json = await res.json().catch(() => null)
+    if (!res.ok) return
+    userSuggestions.value = Array.isArray(json?.data) ? json.data : []
+  } catch {
+    userSuggestions.value = []
+  }
+}
+
+async function loadShares(uuid: string) {
+  try {
+    const res = await apiFetch(`/api/v1/document/${uuid}/shares`)
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      throw new Error(json?.error || 'Failed to load shares.')
+    }
+    shares.value = Array.isArray(json?.data) ? json.data : []
+  } catch (err) {
+    shareError.value = err instanceof Error ? err.message : 'Failed to load shares.'
+  }
+}
+
+async function submitShareDocument() {
+  if (!shareTarget.value) return
+  const username = shareUsername.value.trim()
+  if (!username) {
+    shareError.value = 'Username is required.'
+    return
+  }
+
+  shareLoading.value = true
+  shareError.value = null
+  try {
+    const res = await apiFetch(`/api/v1/document/${shareTarget.value.id}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, role: shareRole.value }),
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      throw new Error(json?.error || 'Failed to send invite.')
+    }
+    if (json?.data) {
+      const next = json.data as DocumentShare
+      shares.value = [next, ...shares.value.filter((share) => share.userId !== next.userId)]
+    }
+    shareUsername.value = ''
+    shareRole.value = 'VIEWER'
+  } catch (err) {
+    shareError.value = err instanceof Error ? err.message : 'Failed to send invite.'
+  } finally {
+    shareLoading.value = false
+  }
+}
+
+async function removeShare(share: DocumentShare) {
+  if (!shareTarget.value) return
+  shareLoading.value = true
+  shareError.value = null
+  try {
+    const res = await apiFetch(`/api/v1/document/${shareTarget.value.id}/share/${share.userId}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      throw new Error(json?.error || 'Failed to remove share.')
+    }
+    shares.value = shares.value.filter((item) => item.userId !== share.userId)
+  } catch (err) {
+    shareError.value = err instanceof Error ? err.message : 'Failed to remove share.'
+  } finally {
+    shareLoading.value = false
+  }
 }
 
 async function loadDocumentDetails(uuid: string) {
@@ -619,6 +765,26 @@ function deleteFromContext() {
   if (!target) return
   promptDelete(target)
   closeContextMenu()
+}
+
+async function removeSharedDocumentFromContext() {
+  const target = contextMenuTarget.value
+  if (!target || target.type !== 'file' || !target.shared) return
+  closeContextMenu()
+  loadError.value = null
+
+  try {
+    const res = await apiFetch(`/api/v1/document/${target.id}/share/me`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      throw new Error(json?.error ?? json?.message ?? `Failed to remove document. (${res.status})`)
+    }
+    await loadTree()
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : 'Failed to remove document.'
+  }
 }
 
 defineExpose({
@@ -813,7 +979,7 @@ defineExpose({
                         {{ item.name }}
                       </p>
                       <p class="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                        {{ item.type === 'folder' ? 'Folder' : 'PDF document' }}
+                        {{ item.type === 'folder' ? 'Folder' : item.shared ? `Shared by ${item.owner || 'another user'}` : 'PDF document' }}
                       </p>
                     </div>
                   </div>
@@ -860,7 +1026,7 @@ defineExpose({
                     Rename
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                      v-else
+                      v-else-if="!contextMenuTarget?.shared"
                       class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-900 data-[highlighted]:bg-emerald-600/15 data-[highlighted]:text-emerald-900 dark:text-neutral-50 dark:data-[highlighted]:bg-emerald-500/20 dark:data-[highlighted]:text-emerald-200"
                       @select.prevent="startEditDocument(contextMenuTarget!)"
                   >
@@ -868,11 +1034,28 @@ defineExpose({
                     Edit
                   </DropdownMenuItem>
                   <DropdownMenuItem
+                      v-if="contextMenuTarget?.type === 'file' && !contextMenuTarget?.shared"
+                      class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-900 data-[highlighted]:bg-emerald-600/15 data-[highlighted]:text-emerald-900 dark:text-neutral-50 dark:data-[highlighted]:bg-emerald-500/20 dark:data-[highlighted]:text-emerald-200"
+                      @select.prevent="startShareDocument(contextMenuTarget!)"
+                  >
+                    <Share2 class="h-4 w-4" />
+                    Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                      v-if="!contextMenuTarget?.shared"
                       class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-900 data-[highlighted]:bg-emerald-600/15 data-[highlighted]:text-emerald-900 dark:text-neutral-50 dark:data-[highlighted]:bg-emerald-500/20 dark:data-[highlighted]:text-emerald-200"
                       @select.prevent="deleteFromContext"
                   >
                     <Trash2 class="h-4 w-4" />
                     Delete
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                      v-if="contextMenuTarget?.type === 'file' && contextMenuTarget?.shared"
+                      class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-600 data-[highlighted]:bg-red-600/10 data-[highlighted]:text-red-700 dark:text-red-400 dark:data-[highlighted]:bg-red-500/15 dark:data-[highlighted]:text-red-300"
+                      @select.prevent="removeSharedDocumentFromContext"
+                  >
+                    <X class="h-4 w-4" />
+                    Remove
                   </DropdownMenuItem>
                  </DropdownMenuContent>
                </DropdownMenu>
@@ -991,6 +1174,68 @@ defineExpose({
             <Button type="submit" :disabled="editLoading">
               <Loader2 v-if="editLoading" class="mr-2 h-4 w-4 animate-spin" />
               Save changes
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="shareDialogOpen" @update:open="onShareDialogChange" modal>
+      <DialogContent class="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>Share document</DialogTitle>
+          <DialogDescription>
+            Invite an existing user and choose whether they can view or edit the document.
+          </DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitShareDocument">
+          <div class="grid gap-2 sm:grid-cols-[1fr,130px]">
+            <Input
+                v-model="shareUsername"
+                placeholder="Search username"
+                list="document-share-users"
+                autocomplete="off"
+                :disabled="shareLoading"
+                @input="queueUserSuggestions"
+            />
+            <datalist id="document-share-users">
+              <option v-for="user in userSuggestions" :key="user.id" :value="user.username" />
+            </datalist>
+            <select
+                v-model="shareRole"
+                class="h-10 rounded-md border border-neutral-300 bg-white px-3 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                :disabled="shareLoading"
+            >
+              <option value="VIEWER">Viewer</option>
+              <option value="EDITOR">Editor</option>
+            </select>
+          </div>
+          <p v-if="shareError" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+            {{ shareError }}
+          </p>
+          <div class="space-y-2">
+            <p class="text-xs font-medium text-neutral-500 dark:text-neutral-400">Current invites and shares</p>
+            <div v-if="shares.length" class="space-y-2">
+              <div
+                  v-for="share in shares"
+                  :key="share.userId"
+                  class="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
+              >
+                <span>{{ share.username }} · {{ share.role }} · {{ share.status }}</span>
+                <Button type="button" variant="ghost" size="icon" class="h-7 w-7" :disabled="shareLoading" @click="removeShare(share)">
+                  <X class="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <p v-else class="text-xs text-neutral-500 dark:text-neutral-400">No invites or shares yet.</p>
+          </div>
+          <DialogFooter class="pt-2">
+            <Button type="button" variant="outline" :disabled="shareLoading" @click="shareDialogOpen = false">
+              Cancel
+            </Button>
+            <Button type="submit" :disabled="shareLoading">
+              <Loader2 v-if="shareLoading" class="mr-2 h-4 w-4 animate-spin" />
+              Send invite
             </Button>
           </DialogFooter>
         </form>

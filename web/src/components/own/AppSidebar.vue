@@ -29,6 +29,7 @@ import {
   LogOut,
   User as UserIcon,
   Ticket,
+  Inbox,
 } from 'lucide-vue-next'
 import { checkIsAdmin } from '@/lib/admin'
 import { logout } from '@/auth/logout'
@@ -71,6 +72,7 @@ const effectiveOpen = computed(() => {
 const navItems = computed(() => [
   { title: 'Home', to: '/', icon: HomeIcon },
   { title: 'Search', to: '/search', icon: SearchIcon },
+  { title: 'Inbox', to: '/invites', icon: Inbox },
   { title: 'Digi4School', to: '/d4s', icon: D4SIcon },
 ])
 

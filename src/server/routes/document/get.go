@@ -38,7 +38,7 @@ func Get(c *gin.Context) {
 		return
 	}
 
-	if doc.UserID != userID {
+	if !canReadDocument(doc, userID) {
 		routes.JSONError(c, http.StatusForbidden, "not authorized to access this document")
 		return
 	}

@@ -1,11 +1,11 @@
 package repo
 
 import (
-	"paperlink/db/entity"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+	"paperlink/db/entity"
 )
 
 type DocumentRepo struct {
@@ -27,6 +27,17 @@ func (r *DocumentRepo) GetAnnotationsById(documentID int) ([]entity.Annotation, 
 func (r *DocumentRepo) GetAllByUserIdWithFile(userId int) ([]entity.Document, error) {
 	var result []entity.Document
 	err := r.db.Preload("File").Preload("Tags").Where("user_id = ?", userId).Find(&result).Error
+	return result, err
+}
+
+func (r *DocumentRepo) GetSharedByUserIdWithFile(userId int) ([]entity.Document, error) {
+	var result []entity.Document
+	err := r.db.
+		Preload("File").
+		Preload("User").
+		Joins("JOIN document_users du ON du.document_id = documents.id").
+		Where("du.user_id = ? AND du.status = ? AND documents.user_id <> ?", userId, entity.DocumentInviteAccepted, userId).
+		Find(&result).Error
 	return result, err
 }
 
@@ -73,7 +84,9 @@ func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entit
 		Model(&entity.Document{}).
 		Preload("Tags").
 		Preload("File").
-		Where("documents.user_id = ?", userID)
+		Preload("User").
+		Joins("LEFT JOIN document_users du ON du.document_id = documents.id AND du.user_id = ? AND du.status = ?", userID, entity.DocumentInviteAccepted).
+		Where("(documents.user_id = ? OR du.user_id = ?)", userID, userID)
 
 	if search != "" {
 		like := "%" + strings.TrimSpace(search) + "%"
