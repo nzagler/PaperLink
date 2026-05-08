@@ -62,6 +62,16 @@ func (r *DocumentUserRepo) GetSharesByDocumentID(documentID int) ([]entity.Docum
 	return shares, err
 }
 
+func (r *DocumentUserRepo) GetSharesByDocumentIDOrdered(documentID int) ([]entity.DocumentUser, error) {
+	var shares []entity.DocumentUser
+	err := r.db.
+		Preload("User").
+		Where("document_id = ?", documentID).
+		Order("created_at ASC").
+		Find(&shares).Error
+	return shares, err
+}
+
 func (r *DocumentUserRepo) GetPendingInvitesByUserID(userID int) ([]entity.DocumentUser, error) {
 	var invites []entity.DocumentUser
 	err := r.db.

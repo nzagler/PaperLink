@@ -37,8 +37,12 @@ func Refresh(c *gin.Context) {
 		routes.JSONError(c, http.StatusUnauthorized, "user no longer exists")
 		return
 	}
+	if claims.TokenVersion != user.TokenVersion {
+		routes.JSONError(c, http.StatusUnauthorized, "session expired")
+		return
+	}
 
-	access, err := util.RefreshAccessToken(refreshToken)
+	access, err := util.RefreshAccessToken(refreshToken, user.TokenVersion)
 	if err != nil {
 		routes.JSONError(c, http.StatusUnauthorized, "invalid refresh token")
 		return

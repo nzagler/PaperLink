@@ -43,18 +43,11 @@ func Stats(c *gin.Context) {
 		return
 	}
 
-	// Sum file sizes/pages (file_documents are the source of truth)
-	fileDocs, err := repo.FileDocument.GetList()
+	// Sum only files that are still attached to documents. Orphaned uploads should not affect live stats.
+	storage, err := repo.FileDocument.GetUsedStorageStats()
 	if err != nil {
-		routes.JSONError(c, http.StatusInternalServerError, "failed to list file documents")
+		routes.JSONError(c, http.StatusInternalServerError, "failed to calculate storage")
 		return
-	}
-
-	var totalSize uint64
-	var totalPages uint64
-	for _, f := range fileDocs {
-		totalSize += f.Size
-		totalPages += f.Pages
 	}
 
 	// D4S books/accounts
@@ -72,8 +65,8 @@ func Stats(c *gin.Context) {
 	routes.JSONSuccessOK(c, StatsResponse{
 		UserCount:       int64(len(users)),
 		DocumentCount:   int64(len(docs)),
-		TotalDocSize:    totalSize,
-		TotalPages:      totalPages,
+		TotalDocSize:    storage.TotalSize,
+		TotalPages:      storage.TotalPages,
 		D4SBookCount:    int64(len(d4sBooks)),
 		D4SAccountCount: int64(len(accs)),
 	})

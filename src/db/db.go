@@ -83,6 +83,9 @@ func ensureSQLiteColumns(instance *gorm.DB) error {
 			"created_at": "ALTER TABLE document_users ADD COLUMN created_at datetime",
 			"updated_at": "ALTER TABLE document_users ADD COLUMN updated_at datetime",
 		},
+		"users": {
+			"token_version": "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
+		},
 	}
 
 	for tableName, tableColumns := range requiredColumns {

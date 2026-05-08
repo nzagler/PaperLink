@@ -59,6 +59,31 @@ func (n *UserRepo) SearchUsers(query string, excludeUserID int, limit int) ([]en
 	return users, err
 }
 
+func (n *UserRepo) SetAdmin(userID int, isAdmin bool) error {
+	return n.db.Model(&entity.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]any{
+			"is_admin":       isAdmin,
+			"token_version": gorm.Expr("token_version + 1"),
+		}).Error
+}
+
+func (n *UserRepo) InvalidateSessions(userID int) error {
+	return n.db.Model(&entity.User{}).
+		Where("id = ?", userID).
+		Update("token_version", gorm.Expr("token_version + 1")).Error
+}
+
+func (n *UserRepo) DeleteUser(userID int) error {
+	return n.db.Delete(&entity.User{}, userID).Error
+}
+
+func (n *UserRepo) CountAdmins() (int64, error) {
+	var count int64
+	err := n.db.Model(&entity.User{}).Where("is_admin = ?", true).Count(&count).Error
+	return count, err
+}
+
 func (r *DocumentRepo) GetOwnedDocuments(userId int) ([]entity.Document, error) {
 	var documents []entity.Document
 	err := r.db.Where("UserID = ?", userId).Find(&documents).Error

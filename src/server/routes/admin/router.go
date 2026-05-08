@@ -13,4 +13,8 @@ func InitAdminRouter(r *gin.Engine) {
 	group.Use(middleware.Auth, middleware.Admin)
 
 	group.GET("/stats", Stats)
+	group.GET("/users", ListUsers)
+	group.PATCH("/users/:id/role", UpdateUserRole)
+	group.POST("/users/:id/logout", InvalidateUserSessions)
+	group.DELETE("/users/:id", DeleteUser)
 }
