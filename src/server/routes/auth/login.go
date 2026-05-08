@@ -59,15 +59,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(
-		"refresh",
-		refresh,
-		60*60*24*30,
-		"/",
-		"",
-		false,
-		true,
-	)
+	setRefreshCookie(c, refresh)
 	routes.JSONSuccess(c, http.StatusOK, LoginResponse{
 		AccessToken: access,
 	})
