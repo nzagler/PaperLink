@@ -35,13 +35,6 @@
                 <SelectItem value="shared">Shared</SelectItem>
               </SelectContent>
             </Select>
-
-            <Button
-                type="submit"
-                class="h-9 rounded-full px-4 text-xs sm:text-sm"
-            >
-              Search
-            </Button>
           </div>
         </form>
       </div>
@@ -74,7 +67,6 @@
                 class="h-7 w-7 rounded-full text-neutral-500 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 @click="resetFilters"
             >
-              <FilterIcon class="h-4 w-4" />
             </Button>
           </div>
         </CardHeader>

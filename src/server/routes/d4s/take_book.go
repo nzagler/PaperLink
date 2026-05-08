@@ -1,8 +1,10 @@
 package d4s
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"paperlink/ptf"
 	"paperlink/pvf"
 	"paperlink/util"
@@ -53,6 +55,19 @@ func TakeBook(c *gin.Context) {
 		return
 	}
 
+	file := repo.FileDocument.GetByUUID(book.FileUUID)
+	if file == nil {
+		routes.JSONError(c, http.StatusNotFound, "book file not found")
+		return
+	}
+
+	thumbDst := "./data/uploads/" + book.FileUUID + "_thumb.ptf"
+	if _, err := os.Stat(thumbDst); os.IsNotExist(err) {
+		if genErr := generateD4SThumbnailPTF(file.Path, thumbDst); genErr != nil {
+			log.Errorf("failed to generate thumbnail ptf for book %d: %v", id, genErr)
+		}
+	}
+
 	doc := entity.Document{
 		UUID:        uuid.NewString(),
 		Name:        book.BookName,
@@ -61,43 +76,55 @@ func TakeBook(c *gin.Context) {
 		FileUUID:    book.FileUUID,
 	}
 
-	file := repo.FileDocument.GetByUUID(book.FileUUID)
-	if file == nil {
-		routes.JSONError(c, http.StatusNotFound, "book file not found")
-		return
-	}
-
 	if err := repo.Document.Save(&doc); err != nil {
 		routes.JSONError(c, http.StatusInternalServerError, "failed to create document")
 		return
 	}
 
-	thumbDst := "./data/uploads/" + book.FileUUID + "_thumb.ptf"
-	if _, err := os.Stat(thumbDst); os.IsNotExist(err) {
-		pageData, err := pvf.ReadPage(file.Path, 1)
-		if err != nil {
-			log.Warnf("failed to read first pvf page for thumbnail: %v", err)
-		} else {
-			if err := os.MkdirAll("./data/tmp/uploads", 0750); err == nil {
-				tmpPDF := "./data/tmp/uploads/" + book.FileUUID + "_thumb_src.pdf"
-				defer os.Remove(tmpPDF)
+	routes.JSONSuccessOK(c, TakeBookResponse{ID: doc.UUID})
+}
 
-				if err := os.WriteFile(tmpPDF, pageData, 0o644); err != nil {
-					log.Warnf("failed to write temp pdf for thumbnail: %v", err)
-				} else {
-					thumbPTFFile, err := ptf.WriteThumbnailPTFFromPDF(tmpPDF)
-					if err != nil {
-						log.Warnf("failed to generate thumbnail ptf: %v", err)
-					} else {
-						defer os.RemoveAll(filepath.Dir(thumbPTFFile))
-						if err := util.CopyFile(thumbPTFFile, thumbDst); err != nil {
-							log.Warnf("failed to copy thumbnail ptf: %v", err)
-						}
-					}
-				}
-			}
-		}
+func generateD4SThumbnailPTF(pvfPath, thumbDst string) error {
+	metadata, err := pvf.ReadMetadata(pvfPath)
+	if err != nil {
+		return fmt.Errorf("failed to read pvf metadata: %w", err)
 	}
 
-	routes.JSONSuccessOK(c, TakeBookResponse{ID: doc.UUID})
+	tmpDir, err := os.MkdirTemp("./data/tmp/uploads", "d4s-thumb-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	pagePaths := make([]string, 0, metadata.PageCount)
+	for i := uint64(1); i <= metadata.PageCount; i++ {
+		pageData, err := pvf.ReadPage(pvfPath, i)
+		if err != nil {
+			return fmt.Errorf("failed to read page %d: %w", i, err)
+		}
+		pagePath := filepath.Join(tmpDir, fmt.Sprintf("page-%04d.pdf", i))
+		if err := os.WriteFile(pagePath, pageData, 0o644); err != nil {
+			return fmt.Errorf("failed to write page %d: %w", i, err)
+		}
+		pagePaths = append(pagePaths, pagePath)
+	}
+
+	mergedPDF := filepath.Join(tmpDir, "merged.pdf")
+	args := append([]string{"--empty", "--pages"}, pagePaths...)
+	args = append(args, "--", mergedPDF)
+	if output, err := exec.Command("qpdf", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("qpdf merge failed: %w: %s", err, string(output))
+	}
+
+	thumbPTFFile, err := ptf.WriteThumbnailPTFFromPDF(mergedPDF)
+	if err != nil {
+		return fmt.Errorf("failed to write thumbnail ptf: %w", err)
+	}
+	defer os.RemoveAll(filepath.Dir(thumbPTFFile))
+
+	if err := util.CopyFile(thumbPTFFile, thumbDst); err != nil {
+		return fmt.Errorf("failed to copy thumbnail ptf: %w", err)
+	}
+
+	return nil
 }

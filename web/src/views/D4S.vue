@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
 
           <CardContent class="p-3">
             <div class="space-y-1">
-              <p class="text-sm font-semibold leading-snug line-clamp-2">
+              <p class="text-sm font-semibold leading-snug line-clamp-2 min-h-[2.5em]">
                 {{ book.bookName }}
               </p>
               <p class="text-[11px] text-neutral-500 dark:text-neutral-400">

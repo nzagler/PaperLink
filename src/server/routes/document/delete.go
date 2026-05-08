@@ -31,8 +31,8 @@ func Delete(c *gin.Context) {
 
 	userID := c.GetInt("userId")
 
-	doc, err := repo.Document.Get(id)
-	if err != nil || doc == nil {
+	doc := repo.Document.GetByUUIDWithFile(id)
+	if doc == nil {
 		routes.JSONError(c, http.StatusNotFound, "document not found")
 		return
 	}
@@ -42,8 +42,8 @@ func Delete(c *gin.Context) {
 		return
 	}
 
-	if err := repo.Document.Delete(id); err != nil {
-		log.Errorf("failed to delete document %d: %v", id, err)
+	if err := repo.Document.DeleteByUUID(id); err != nil {
+		log.Errorf("failed to delete document %s: %v", id, err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to delete document")
 		return
 	}
