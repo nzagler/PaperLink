@@ -37,10 +37,14 @@ func Refresh(c *gin.Context) {
 		routes.JSONError(c, http.StatusUnauthorized, "user no longer exists")
 		return
 	}
+	if claims.TokenVersion != user.TokenVersion {
+		routes.JSONError(c, http.StatusUnauthorized, "session expired")
+		return
+	}
 
 	// Re-issue tokens from current DB user state so claim data (e.g. username)
 	// stays in sync after profile changes.
-	access, refresh, err := util.GenerateJWT(user.ID, user.Username)
+	access, refresh, err := util.GenerateJWT(user.ID, user.Username, user.TokenVersion)
 	if err != nil {
 		routes.JSONError(c, http.StatusUnauthorized, "invalid refresh token")
 		return

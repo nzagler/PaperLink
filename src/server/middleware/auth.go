@@ -40,6 +40,11 @@ func Auth(c *gin.Context) {
 		routes.JSONError(c, http.StatusUnauthorized, "user not found")
 		return
 	}
+	if claims.TokenVersion != user.TokenVersion {
+		c.Abort()
+		routes.JSONError(c, http.StatusUnauthorized, "session expired")
+		return
+	}
 
 	c.Set("userId", claims.UserID)
 	c.Next()

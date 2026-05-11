@@ -52,7 +52,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	access, refresh, err := util.GenerateJWT(user.ID, user.Username)
+	access, refresh, err := util.GenerateJWT(user.ID, user.Username, user.TokenVersion)
 	if err != nil {
 		log.Errorf("failed to generate jwt for user %s: %v", req.Username, err)
 		routes.JSONError(c, http.StatusInternalServerError, "failed to generate jwt")

@@ -12,19 +12,21 @@ var (
 )
 
 type UserClaims struct {
-	UserID int    `json:"userId"`
-	Name   string `json:"name"`
-	Type   string `json:"type"`
+	UserID       int    `json:"userId"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	TokenVersion int    `json:"tokenVersion"`
 	jwt.RegisteredClaims
 }
 
-func GenerateJWT(userID int, name string) (string, string, error) {
+func GenerateJWT(userID int, name string, tokenVersion int) (string, string, error) {
 	now := time.Now()
 
 	accessClaims := UserClaims{
-		UserID: userID,
-		Name:   name,
-		Type:   "access",
+		UserID:       userID,
+		Name:         name,
+		Type:         "access",
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -33,9 +35,10 @@ func GenerateJWT(userID int, name string) (string, string, error) {
 	}
 
 	refreshClaims := UserClaims{
-		UserID: userID,
-		Name:   name,
-		Type:   "refresh",
+		UserID:       userID,
+		Name:         name,
+		Type:         "refresh",
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(30 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -77,7 +80,7 @@ func ParseJWT(tokenStr string) (*UserClaims, error) {
 	return claims, nil
 }
 
-func RefreshAccessToken(refreshToken string) (string, error) {
+func RefreshAccessToken(refreshToken string, tokenVersion int) (string, error) {
 	claims, err := ParseJWT(refreshToken)
 	if err != nil {
 		return "", err
@@ -89,9 +92,10 @@ func RefreshAccessToken(refreshToken string) (string, error) {
 
 	now := time.Now()
 	newAccessClaims := UserClaims{
-		UserID: claims.UserID,
-		Name:   claims.Name,
-		Type:   "access",
+		UserID:       claims.UserID,
+		Name:         claims.Name,
+		Type:         "access",
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(now),

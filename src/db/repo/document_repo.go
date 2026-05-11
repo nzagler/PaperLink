@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,19 +66,72 @@ func (r *DocumentRepo) GetByUUIDWithTagsAndFile(uuid string) *entity.Document {
 }
 
 func (r *DocumentRepo) DeleteByUUID(uuid string) error {
-	res := r.db.
-		Where("uuid = ?", uuid).
-		Delete(&entity.Document{})
-
-	if res.Error != nil {
-		return res.Error
+	var doc entity.Document
+	if err := r.db.Preload("File").Where("uuid = ?", uuid).First(&doc).Error; err != nil {
+		return err
 	}
 
-	if res.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	if err := r.deleteDocumentWithFile(&doc); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func (r *DocumentRepo) deleteDocumentWithFile(doc *entity.Document) error {
+	filePath := doc.File.Path
+	fileUUID := doc.FileUUID
+	shouldRemoveFile := false
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("document_id = ?", doc.ID).Delete(&entity.DocumentUser{}).Error; err != nil {
+			return err
+		}
+		target := &entity.Document{ID: doc.ID}
+		if err := tx.Model(target).Association("Tags").Clear(); err != nil {
+			return err
+		}
+		if err := tx.Delete(&entity.Document{}, doc.ID).Error; err != nil {
+			return err
+		}
+
+		var documentRefs int64
+		if err := tx.Model(&entity.Document{}).Where("file_uuid = ?", fileUUID).Count(&documentRefs).Error; err != nil {
+			return err
+		}
+		var d4sRefs int64
+		if err := tx.Model(&entity.Digi4SchoolBook{}).Where("file_uuid = ?", fileUUID).Count(&d4sRefs).Error; err != nil {
+			return err
+		}
+		if documentRefs > 0 || d4sRefs > 0 {
+			return nil
+		}
+
+		if err := tx.Where("uuid = ?", fileUUID).Delete(&entity.FileDocument{}).Error; err != nil {
+			return err
+		}
+		shouldRemoveFile = true
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if shouldRemoveFile {
+		removeDocumentFiles(filePath)
+	}
+	return nil
+}
+
+func removeDocumentFiles(filePath string) {
+	if filePath == "" {
+		return
+	}
+
+	_ = os.Remove(filePath)
+	ext := filepath.Ext(filePath)
+	base := strings.TrimSuffix(filePath, ext)
+	_ = os.Remove(base + "_thumb.ptf")
 }
 
 func (r *DocumentRepo) Filter(userID int, tags []string, search string) ([]entity.Document, error) {
@@ -136,4 +191,64 @@ func (r *DocumentRepo) TouchUpdatedAt(uuid string) {
 	r.db.Model(&entity.Document{}).
 		Where("uuid = ?", uuid).
 		Update("updated_at", time.Now())
+}
+
+type UserDocumentStorageStats struct {
+	DocumentCount int64
+	TotalSize     uint64
+	TotalPages    uint64
+}
+
+func (r *DocumentRepo) GetUserDocumentStorageStats(userID int) (UserDocumentStorageStats, error) {
+	var stats UserDocumentStorageStats
+	err := r.db.
+		Table("documents").
+		Select("COUNT(documents.id) as document_count, COALESCE(SUM(file_documents.size), 0) as total_size, COALESCE(SUM(file_documents.pages), 0) as total_pages").
+		Joins("LEFT JOIN file_documents ON file_documents.uuid = documents.file_uuid").
+		Where("documents.user_id = ?", userID).
+		Scan(&stats).Error
+	return stats, err
+}
+
+func (r *DocumentRepo) DeleteOrTransferDocumentsBeforeUserDelete(userID int) error {
+	var docs []entity.Document
+	if err := r.db.Preload("File").Where("user_id = ?", userID).Find(&docs).Error; err != nil {
+		return err
+	}
+
+	for _, doc := range docs {
+		var shares []entity.DocumentUser
+		if err := r.db.
+			Where("document_id = ? AND user_id <> ? AND status = ?", doc.ID, userID, entity.DocumentInviteAccepted).
+			Order("created_at ASC").
+			Find(&shares).Error; err != nil {
+			return err
+		}
+
+		if len(shares) == 0 {
+			if err := r.deleteDocumentWithFile(&doc); err != nil {
+				return err
+			}
+			continue
+		}
+
+		newOwnerID := shares[0].UserID
+		if err := r.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&entity.Document{}).
+				Where("id = ?", doc.ID).
+				Updates(map[string]any{
+					"user_id":      newOwnerID,
+					"directory_id": nil,
+				}).Error; err != nil {
+				return err
+			}
+
+			return tx.Where("document_id = ? AND user_id = ?", doc.ID, newOwnerID).
+				Delete(&entity.DocumentUser{}).Error
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

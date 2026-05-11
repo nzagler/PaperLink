@@ -331,7 +331,7 @@ func handleOIDCLogin(c *gin.Context, config *entity.OIDCConfig, claims oidcClaim
 		return
 	}
 
-	_, refresh, err := util.GenerateJWT(user.ID, user.Username)
+	_, refresh, err := util.GenerateJWT(user.ID, user.Username, user.TokenVersion)
 	if err != nil {
 		redirectOIDCError(c, "oidc_token_failed")
 		return
