@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref, computed, watch} from "vue"
-import { useRouter } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
@@ -11,6 +11,7 @@ import ExternalAuthForm from "@/components/own/auth/ExternalAuthForm.vue"
 type Tab = "login" | "register" | "external"
 
 const router = useRouter()
+const route = useRoute()
 const activeTab = ref<Tab>("login")
 
 
@@ -45,6 +46,16 @@ function onRegisterSuccess() {
 watch(activeTab, () => {
   clear()
 })
+
+watch(
+  () => route.query.oidc_error,
+  (error) => {
+    if (!error) return
+    activeTab.value = "external"
+    errorMessage.value = "OIDC sign-in failed. Make sure this account is connected in user settings."
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

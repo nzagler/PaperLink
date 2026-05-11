@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
-import { FileText, KeyRound, Shield, User as UserIcon } from "lucide-vue-next"
+import { computed, onMounted, ref } from "vue"
+import { FileText, KeyRound, Link, Shield, ShieldCheck, Unlink, User as UserIcon } from "lucide-vue-next"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 
 import { currentUser } from "@/auth/user"
-import { changePassword, changeUsername } from "@/auth/account"
+import { changePassword, changeUsername, disconnectOidcIdentity, getOidcConfig, saveOidcConfig } from "@/auth/account"
 
 type Notice = { type: "success" | "error"; message: string } | null
 
@@ -87,6 +87,96 @@ async function onSavePassword() {
     passwordSaving.value = false
   }
 }
+
+const oidcIssuerUrl = ref("")
+const oidcClientId = ref("")
+const oidcClientSecret = ref("")
+const oidcScopes = ref("openid profile email")
+const oidcEnabled = ref(false)
+const oidcConfigured = ref(false)
+const oidcConnected = ref(false)
+const oidcLoading = ref(false)
+const oidcSaving = ref(false)
+const oidcDisconnecting = ref(false)
+const oidcRedirectUri = computed(() => `${window.location.origin}/api/v1/auth/oidc/callback`)
+
+const oidcCanSave = computed(() => {
+  return (
+    oidcIssuerUrl.value.trim() !== "" &&
+    oidcClientId.value.trim() !== "" &&
+    (oidcConfigured.value || oidcClientSecret.value.trim() !== "") &&
+    !oidcSaving.value
+  )
+})
+
+async function loadOidcConfig() {
+  oidcLoading.value = true
+  try {
+    const config = await getOidcConfig()
+    oidcConfigured.value = config.configured
+    oidcConnected.value = config.connected
+    oidcIssuerUrl.value = config.issuerUrl
+    oidcClientId.value = config.clientId
+    oidcScopes.value = config.scopes || "openid profile email"
+    oidcEnabled.value = config.enabled
+  } catch (e: any) {
+    showNotice({ type: "error", message: e?.message ?? "Failed to load OIDC settings" })
+  } finally {
+    oidcLoading.value = false
+  }
+}
+
+async function onSaveOidcConfig() {
+  if (!oidcCanSave.value) return
+  oidcSaving.value = true
+  try {
+    const config = await saveOidcConfig({
+      issuerUrl: oidcIssuerUrl.value.trim(),
+      clientId: oidcClientId.value.trim(),
+      clientSecret: oidcClientSecret.value.trim(),
+      scopes: oidcScopes.value.trim() || "openid profile email",
+      enabled: oidcEnabled.value,
+    })
+    oidcConfigured.value = config.configured
+    oidcConnected.value = config.connected
+    oidcIssuerUrl.value = config.issuerUrl
+    oidcClientId.value = config.clientId
+    oidcScopes.value = config.scopes
+    oidcEnabled.value = config.enabled
+    oidcClientSecret.value = ""
+    showNotice({ type: "success", message: "OIDC provider saved." })
+  } catch (e: any) {
+    showNotice({ type: "error", message: e?.message ?? "Failed to save OIDC provider" })
+  } finally {
+    oidcSaving.value = false
+  }
+}
+
+function connectOidc() {
+  window.location.assign("/api/v1/auth/oidc/start?mode=link")
+}
+
+async function disconnectOidc() {
+  oidcDisconnecting.value = true
+  try {
+    await disconnectOidcIdentity()
+    oidcConnected.value = false
+    showNotice({ type: "success", message: "OIDC account disconnected." })
+  } catch (e: any) {
+    showNotice({ type: "error", message: e?.message ?? "Failed to disconnect OIDC account" })
+  } finally {
+    oidcDisconnecting.value = false
+  }
+}
+
+onMounted(() => {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get("oidc") === "connected") {
+    showNotice({ type: "success", message: "OIDC account connected." })
+    window.history.replaceState({}, "", "/settings")
+  }
+  loadOidcConfig()
+})
 </script>
 
 <template>
@@ -180,6 +270,82 @@ async function onSavePassword() {
             >
               <KeyRound class="h-4 w-4" />
               {{ passwordSaving ? 'Saving…' : 'Update' }}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card class="border border-neutral-200 dark:border-neutral-800">
+      <CardHeader>
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700/10 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+          >
+            <ShieldCheck class="h-4 w-4" />
+          </span>
+          <div>
+            <CardTitle class="text-sm">OpenID Connect</CardTitle>
+            <CardDescription class="text-[11px]">Configure an OIDC provider and link it to this account.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent class="space-y-4">
+        <div
+          class="rounded-xl border px-4 py-3 text-xs"
+          :class="
+            oidcConnected
+              ? 'border-emerald-600/30 bg-emerald-600/10 text-emerald-900 dark:text-emerald-200 dark:bg-emerald-500/10'
+              : 'border-neutral-200 bg-neutral-50 text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-300'
+          "
+        >
+          {{ oidcConnected ? 'This account is linked to OIDC.' : 'Save a provider, then connect this account.' }}
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-neutral-700 dark:text-neutral-200">
+          <input v-model="oidcEnabled" type="checkbox" class="h-4 w-4 rounded border-neutral-300 accent-emerald-700" />
+          Enable OIDC
+        </label>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Input v-model="oidcIssuerUrl" placeholder="Issuer URL, e.g. https://id.example.com" />
+          <Input v-model="oidcClientId" placeholder="Client ID" />
+          <Input v-model="oidcClientSecret" placeholder="Client secret" />
+          <Input v-model="oidcScopes" placeholder="Scopes" />
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p class="text-[11px] text-neutral-500 dark:text-neutral-400">
+            Redirect URI: <span class="font-mono">{{ oidcRedirectUri }}</span>
+            <span v-if="oidcConfigured">. Leave the client secret blank to keep the existing value.</span>
+          </p>
+          <div class="flex gap-2">
+            <Button
+              variant="outline"
+              class="rounded-xl"
+              :disabled="!oidcConfigured || oidcLoading"
+              @click="connectOidc"
+            >
+              <Link class="h-4 w-4" />
+              Connect
+            </Button>
+            <Button
+              v-if="oidcConnected"
+              variant="outline"
+              class="rounded-xl"
+              :disabled="oidcDisconnecting"
+              @click="disconnectOidc"
+            >
+              <Unlink class="h-4 w-4" />
+              Disconnect
+            </Button>
+            <Button
+              class="rounded-xl bg-emerald-700 text-white hover:bg-emerald-700/90"
+              :disabled="!oidcCanSave"
+              @click="onSaveOidcConfig"
+            >
+              {{ oidcSaving ? 'Saving...' : 'Save OIDC' }}
             </Button>
           </div>
         </div>
