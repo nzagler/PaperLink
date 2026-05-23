@@ -35,6 +35,16 @@ export async function takeD4SBook(id: number): Promise<void> {
   }
 }
 
+export async function deleteD4SBook(id: number): Promise<void> {
+  const res = await apiFetch(`/api/v1/d4s/book/${id}`, {
+    method: "DELETE",
+  })
+  if (!res.ok) {
+    const msg = await safeError(res)
+    throw new Error(msg)
+  }
+}
+
 export type D4SAccount = {
   id: number
   username?: string

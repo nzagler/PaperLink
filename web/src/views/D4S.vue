@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { MoreVertical, RefreshCcw, LibraryBig } from "lucide-vue-next"
+import { Loader2, MoreVertical, RefreshCcw, LibraryBig, Trash2 } from "lucide-vue-next"
 import { apiFetch } from "@/auth/api"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
-import { listD4SBooks, takeD4SBook, type Digi4SchoolBook } from "@/lib/d4s_api"
+import { deleteD4SBook, listD4SBooks, takeD4SBook, type Digi4SchoolBook } from "@/lib/d4s_api"
 
 type Notice = { type: "success" | "error"; message: string } | null
 
@@ -26,6 +35,10 @@ const isLoadingBooks = ref(false)
 const books = ref<Digi4SchoolBook[]>([])
 const bookSearch = ref("")
 const takingBookIds = ref(new Set<number>())
+const deletingBookIds = ref(new Set<number>())
+const deleteDialogOpen = ref(false)
+const deleteTarget = ref<Digi4SchoolBook | null>(null)
+const deleteError = ref<string | null>(null)
 const bookThumbnails = ref<Record<number, string>>({})
 
 const filteredBooks = computed(() => {
@@ -89,6 +102,44 @@ async function onTakeBook(id: number) {
     showNotice({ type: "error", message: e?.message ?? "Failed to take book" })
   } finally {
     takingBookIds.value.delete(id)
+  }
+}
+
+function promptDeleteBook(book: Digi4SchoolBook) {
+  deleteTarget.value = book
+  deleteError.value = null
+  deleteDialogOpen.value = true
+}
+
+function onDeleteDialogChange(open: boolean) {
+  deleteDialogOpen.value = open
+  if (!open) {
+    deleteTarget.value = null
+    deleteError.value = null
+  }
+}
+
+async function confirmDeleteBook() {
+  const book = deleteTarget.value
+  if (!book) return
+  deletingBookIds.value.add(book.id)
+  deleteError.value = null
+  try {
+    await deleteD4SBook(book.id)
+    books.value = books.value.filter((item) => item.id !== book.id)
+    if (bookThumbnails.value[book.id]) {
+      URL.revokeObjectURL(bookThumbnails.value[book.id])
+      const next = { ...bookThumbnails.value }
+      delete next[book.id]
+      bookThumbnails.value = next
+    }
+    showNotice({ type: "success", message: "Book deleted." })
+    deleteDialogOpen.value = false
+    deleteTarget.value = null
+  } catch (e: any) {
+    deleteError.value = e?.message ?? "Failed to delete book"
+  } finally {
+    deletingBookIds.value.delete(book.id)
   }
 }
 
@@ -201,16 +252,28 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="absolute top-2 right-2">
-              <Button
-                variant="secondary"
-                size="icon-sm"
-                class="rounded-full bg-black/30 text-white hover:bg-black/40"
-                :disabled="takingBookIds.has(book.id)"
-                @click="onTakeBook(book.id)"
-                :aria-label="`Take ${book.bookName}`"
-              >
-                <MoreVertical class="h-4 w-4" />
-              </Button>
+              <div class="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="icon-sm"
+                  class="rounded-full bg-black/30 text-white hover:bg-black/40"
+                  :disabled="takingBookIds.has(book.id)"
+                  @click="onTakeBook(book.id)"
+                  :aria-label="`Take ${book.bookName}`"
+                >
+                  <MoreVertical class="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="icon-sm"
+                  class="rounded-full bg-black/30 text-white hover:bg-red-600/90"
+                  :disabled="deletingBookIds.has(book.id)"
+                  @click="promptDeleteBook(book)"
+                  :aria-label="`Delete ${book.bookName}`"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -245,5 +308,40 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <Dialog :open="deleteDialogOpen" @update:open="onDeleteDialogChange" modal>
+      <DialogContent class="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>Delete Digi4School book</DialogTitle>
+          <DialogDescription>
+            This removes the synced book from PaperLink. Documents already created from it stay available.
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3 text-sm text-neutral-600 dark:text-neutral-300">
+          <p>
+            Delete <strong>{{ deleteTarget?.bookName }}</strong>?
+          </p>
+          <p
+            v-if="deleteError"
+            class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200"
+          >
+            {{ deleteError }}
+          </p>
+        </div>
+        <DialogFooter class="mt-6">
+          <DialogClose as-child>
+            <Button variant="outline" :disabled="deleteTarget ? deletingBookIds.has(deleteTarget.id) : false">Cancel</Button>
+          </DialogClose>
+          <Button
+            variant="destructive"
+            :disabled="!deleteTarget || deletingBookIds.has(deleteTarget.id)"
+            @click="confirmDeleteBook"
+          >
+            <Loader2 v-if="deleteTarget && deletingBookIds.has(deleteTarget.id)" class="mr-2 h-4 w-4 animate-spin" />
+            Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
