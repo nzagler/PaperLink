@@ -13,6 +13,7 @@ import {
   PencilLine,
   Share2,
   X,
+  Download,
 } from 'lucide-vue-next'
 import {
   Breadcrumb,
@@ -105,6 +106,9 @@ const historyIndex = ref(0)
 
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+const draggedFile = ref<Item | null>(null)
+const dragOverFolderId = ref<string | null>(null)
+const movingFile = ref(false)
 
 async function loadTree() {
   loading.value = true
@@ -262,6 +266,133 @@ function handleItemClick(item: Item) {
 
 function iconFor(item: Item) {
   return item.type === 'folder' ? Folder : FileText
+}
+
+function currentDirectoryId(): number {
+  const last = currentFolder.value
+  if (!last) return 0
+  const parsed = Number(last.id)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+async function downloadDocument(item: Item) {
+  if (item.type !== 'file') return
+  loadError.value = null
+  try {
+    const res = await apiFetch(`/api/v1/pdf/${encodeURIComponent(item.id)}/download`)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || `Failed to download PDF. (${res.status})`)
+    }
+    const blob = await res.blob()
+    const disposition = res.headers.get('Content-Disposition') ?? ''
+    const match = disposition.match(/filename="?([^"]+)"?/i)
+    const filename = match?.[1] || item.name
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : 'Failed to download PDF.'
+  }
+}
+
+function startFileDrag(event: DragEvent, item: Item) {
+  if (item.type !== 'file' || item.shared) return
+  draggedFile.value = item
+  event.dataTransfer?.setData('text/plain', item.id)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function endFileDrag() {
+  draggedFile.value = null
+  dragOverFolderId.value = null
+}
+
+function onFolderDragOver(event: DragEvent, folder: Item) {
+  if (!draggedFile.value || folder.type !== 'folder') return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverFolderId.value = folder.id
+}
+
+function onFolderDragLeave(folder: Item) {
+  if (folder.type === 'folder' && dragOverFolderId.value === folder.id) {
+    dragOverFolderId.value = null
+  }
+}
+
+function onRootDragOver(event: DragEvent) {
+  if (!draggedFile.value) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  dragOverFolderId.value = 'root'
+}
+
+async function moveDraggedFile(targetDirectoryId: number) {
+  const file = draggedFile.value
+  if (!file || movingFile.value) return
+  movingFile.value = true
+  loadError.value = null
+  try {
+    const res = await apiFetch('/api/v1/document/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: file.id, directoryId: targetDirectoryId }),
+    })
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      throw new Error(json?.error ?? json?.message ?? `Failed to move PDF. (${res.status})`)
+    }
+    await loadTree()
+  } catch (err) {
+    loadError.value = err instanceof Error ? err.message : 'Failed to move PDF.'
+  } finally {
+    movingFile.value = false
+    endFileDrag()
+  }
+}
+
+function onFolderDrop(event: DragEvent, folder: Item) {
+  if (folder.type !== 'folder') return
+  event.preventDefault()
+  event.stopPropagation()
+  const dirId = Number(folder.id)
+  if (!Number.isFinite(dirId)) {
+    endFileDrag()
+    return
+  }
+  void moveDraggedFile(dirId)
+}
+
+function onRootDrop(event: DragEvent) {
+  if (!draggedFile.value) return
+  event.preventDefault()
+  void moveDraggedFile(currentDirectoryId())
+}
+
+function onBreadcrumbDragOver(event: DragEvent) {
+  if (!draggedFile.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+}
+
+function onBreadcrumbDrop(event: DragEvent, index: number) {
+  if (!draggedFile.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  const targetDirectoryId = index < 0 ? 0 : Number(pathIds.value[index])
+  if (!Number.isFinite(targetDirectoryId)) {
+    endFileDrag()
+    return
+  }
+  void moveDraggedFile(targetDirectoryId)
 }
 
 // Local payload type for optimistic addUploadedFile (used by Home.vue)
@@ -767,6 +898,13 @@ function deleteFromContext() {
   closeContextMenu()
 }
 
+function downloadFromContext() {
+  const target = contextMenuTarget.value
+  if (!target || target.type !== 'file') return
+  closeContextMenu()
+  void downloadDocument(target)
+}
+
 async function removeSharedDocumentFromContext() {
   const target = contextMenuTarget.value
   if (!target || target.type !== 'file' || !target.shared) return
@@ -903,6 +1041,8 @@ defineExpose({
                       type="button"
                       class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs sm:text-sm text-neutral-600 hover:bg-neutral-200/80 hover:text-neutral-900 transition-colors dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-50"
                       @click="breadcrumbClick(-1)"
+                      @dragover="onBreadcrumbDragOver"
+                      @drop="onBreadcrumbDrop($event, -1)"
                   >
                     <span class="font-medium">Home</span>
                   </button>
@@ -919,6 +1059,8 @@ defineExpose({
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs sm:text-sm text-neutral-600 hover:bg-neutral-200/80 hover:text-neutral-900 transition-colors dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-50"
                         @click="breadcrumbClick(idx)"
+                        @dragover="onBreadcrumbDragOver"
+                        @drop="onBreadcrumbDrop($event, idx)"
                     >
                       <Folder
                           v-if="node.type === 'folder'"
@@ -953,7 +1095,11 @@ defineExpose({
               </div>
             </div>
 
-            <div class="px-4 sm:px-6 py-5 sm:py-6">
+            <div
+                class="px-4 sm:px-6 py-5 sm:py-6"
+                @dragover="onRootDragOver"
+                @drop="onRootDrop"
+            >
               <div v-if="loadError" class="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
                 {{ loadError }}
               </div>
@@ -967,8 +1113,15 @@ defineExpose({
                     v-for="item in currentItems"
                     :key="item.id"
                     class="group relative flex flex-col rounded-xl border border-neutral-200 bg-neutral-50/70 transition-all hover:-translate-y-[1px] hover:border-emerald-500/80 hover:bg-white hover:shadow-lg hover:shadow-emerald-900/10 cursor-pointer dark:border-neutral-800 dark:bg-neutral-900/80 dark:hover:border-emerald-500/60 dark:hover:bg-neutral-800"
+                    :class="item.type === 'folder' && dragOverFolderId === item.id ? 'border-emerald-600 bg-emerald-50 shadow-lg shadow-emerald-900/10 dark:border-emerald-400 dark:bg-emerald-950/30' : ''"
+                    :draggable="item.type === 'file' && !item.shared"
                      @click="handleItemClick(item)"
                      @contextmenu.prevent.stop="openContextMenu($event, item)"
+                     @dragstart="startFileDrag($event, item)"
+                     @dragend="endFileDrag"
+                     @dragover="onFolderDragOver($event, item)"
+                     @dragleave="onFolderDragLeave(item)"
+                     @drop="onFolderDrop($event, item)"
                  >
                   <div class="flex items-start gap-3 p-4">
                     <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-900 text-neutral-50 group-hover:bg-emerald-800 transition-colors dark:bg-neutral-200 dark:text-neutral-900 dark:group-hover:bg-emerald-500">
@@ -1040,6 +1193,14 @@ defineExpose({
                   >
                     <Share2 class="h-4 w-4" />
                     Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                      v-if="contextMenuTarget?.type === 'file'"
+                      class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-neutral-900 data-[highlighted]:bg-emerald-600/15 data-[highlighted]:text-emerald-900 dark:text-neutral-50 dark:data-[highlighted]:bg-emerald-500/20 dark:data-[highlighted]:text-emerald-200"
+                      @select.prevent="downloadFromContext"
+                  >
+                    <Download class="h-4 w-4" />
+                    Download
                   </DropdownMenuItem>
                   <DropdownMenuItem
                       v-if="!contextMenuTarget?.shared"

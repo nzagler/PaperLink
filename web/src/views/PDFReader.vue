@@ -74,6 +74,10 @@
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" :disabled="downloadLoading || pageCount === 0" @click="downloadPdf">
+              <Download class="h-4 w-4" />
+              <span class="hidden sm:inline">Download</span>
+            </Button>
             <Badge
               variant="outline"
               class="gap-1.5 border-neutral-200 bg-neutral-50 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
@@ -109,6 +113,13 @@
             </div>
           </div>
         </header>
+
+        <div
+          v-if="downloadError"
+          class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/80 dark:bg-red-950/40 dark:text-red-200"
+        >
+          {{ downloadError }}
+        </div>
 
         <div
           v-if="collabError"
@@ -390,6 +401,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { usePdfAnnotationOverlay } from '@/composables/usePdfAnnotationOverlay'
 import { usePdfReader } from '@/composables/usePdfReader'
 import { Badge } from '@/components/ui/badge'
@@ -398,7 +410,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import AnnotationColorPicker from '@/components/own/pdf/AnnotationColorPicker.vue'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LoaderCircle, Pencil, Pointer, Trash2, Type, Wifi, WifiOff } from 'lucide-vue-next'
+import { apiFetch } from '@/auth/api'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, LoaderCircle, Pencil, Pointer, Trash2, Type, Wifi, WifiOff } from 'lucide-vue-next'
 
 const {
   pageCount,
@@ -463,6 +476,9 @@ const {
 })
 
 const pageInput = ref('1')
+const downloadError = ref<string | null>(null)
+const downloadLoading = ref(false)
+const route = useRoute()
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && activeTool.value === 'textbox') {
@@ -493,5 +509,37 @@ function submitPageJump() {
   const parsed = Number.parseInt(pageInput.value, 10)
   if (Number.isNaN(parsed)) return
   go(parsed)
+}
+
+async function downloadPdf() {
+  const id = String(route.params.id ?? '')
+  if (!id || downloadLoading.value) return
+
+  downloadLoading.value = true
+  downloadError.value = null
+  try {
+    const res = await apiFetch(`/api/v1/pdf/${encodeURIComponent(id)}/download`)
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(text || `Failed to download PDF. (${res.status})`)
+    }
+
+    const blob = await res.blob()
+    const disposition = res.headers.get('Content-Disposition') ?? ''
+    const match = disposition.match(/filename="?([^"]+)"?/i)
+    const filename = match?.[1] || 'document.pdf'
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    downloadError.value = err instanceof Error ? err.message : 'Failed to download PDF.'
+  } finally {
+    downloadLoading.value = false
+  }
 }
 </script>

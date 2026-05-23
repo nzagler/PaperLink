@@ -18,4 +18,5 @@ func InitDigi4SchoolRouter(r *gin.Engine) {
 	group.GET("/list", ListBooks)
 	group.GET("/thumbnail/:id", GetThumbnail)
 	group.POST("/takeBook/:id", TakeBook)
+	group.DELETE("/book/:id", DeleteBook)
 }
