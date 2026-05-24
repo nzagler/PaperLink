@@ -11,8 +11,6 @@
 </p>
 
 ---
-## Test Philipp
-
 ## About
 
 Paperlink is a clean and lightweight platform for storing, organizing, viewing, and editing PDFs in the browser.  
