@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { Loader2, MoreVertical, RefreshCcw, LibraryBig, Trash2 } from "lucide-vue-next"
+import { Download, Loader2, MoreVertical, RefreshCcw, LibraryBig, Trash2 } from "lucide-vue-next"
 import { apiFetch } from "@/auth/api"
 
 import { Button } from "@/components/ui/button"
@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
                   @click="onTakeBook(book.id)"
                   :aria-label="`Take ${book.bookName}`"
                 >
-                  <!-- <MoreVertical class="h-4 w-4" /> -->
+                  <Download class="h-4 w-4" />
                 </Button>
                 <Button
                   variant="secondary"
