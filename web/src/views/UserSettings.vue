@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue"
-import { FileText, KeyRound, Link, Shield, ShieldCheck, Unlink, User as UserIcon } from "lucide-vue-next"
+import { KeyRound, Link, Shield, ShieldCheck, Unlink, User as UserIcon } from "lucide-vue-next"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -348,29 +348,6 @@ onMounted(() => {
               {{ oidcSaving ? 'Saving...' : 'Save OIDC' }}
             </Button>
           </div>
-        </div>
-      </CardContent>
-    </Card>
-
-    <Card class="border border-neutral-200 dark:border-neutral-800">
-      <CardHeader>
-        <div class="flex items-center gap-2">
-          <span
-            class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-emerald-700/10 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
-          >
-            <FileText class="h-4 w-4" />
-          </span>
-          <div>
-            <CardTitle class="text-sm">PDF reader settings</CardTitle>
-            <CardDescription class="text-[11px]">Coming soon.</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div
-          class="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900/40 dark:text-neutral-300"
-        >
-          Coming soon.
         </div>
       </CardContent>
     </Card>

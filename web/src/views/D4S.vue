@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
                   @click="onTakeBook(book.id)"
                   :aria-label="`Take ${book.bookName}`"
                 >
-                  <MoreVertical class="h-4 w-4" />
+                  <!-- <MoreVertical class="h-4 w-4" /> -->
                 </Button>
                 <Button
                   variant="secondary"
